@@ -130,6 +130,7 @@ def test_menus(browser: Browser) -> None:
     browser.cols[0].select_key("usd:asset")
     version = browser.cols[1].all_data()[0]
     assert menu_labels(actions.column_menu(browser, 1, version)) == [
+        "Copy next version path",
         "Open folder",
         "Finalize / Edit comment…",
         "Set as current",
@@ -193,3 +194,36 @@ def test_mode_buttons_follow_set_mode(browser: Browser) -> None:
     browser.set_mode("shots")
     checked = [b.property("mode") for b in browser.mode_buttons.buttons() if b.isChecked()]
     assert checked == ["shots"]
+
+
+def test_copy_next_version_path(browser: Browser, show: Project, qapp) -> None:
+    browser.set_view("products")
+    browser.cols[0].select_key("pants")
+    menu = actions.column_menu(browser, 1, None)  # right-click on empty space in Versions
+    assert menu_labels(menu) == ["Copy next version path"]
+    trigger(menu, "Copy next version path")
+    expected = show.root / "assets/char/hero/publish/pants/v002/hero_pants_v002"
+    assert qapp.clipboard().text() == str(expected)
+    assert expected.parent.is_dir()  # the folder is reserved
+    assert browser.version().number == 2  # the new version is selected
+
+
+def test_copy_next_media_path(browser: Browser, show: Project, qapp) -> None:
+    browser.set_view("media")
+    browser.cols[0].select_key("turntable")
+    trigger(actions.column_menu(browser, 1, None), "Copy next version path")
+    assert qapp.clipboard().text().endswith("turntable/v002/hero_turntable_v002")
+
+
+def test_copy_next_workfile_path(browser: Browser, show: Project, qapp) -> None:
+    trigger(actions.column_menu(browser, 2, None), "Copy next version path")
+    work = show.root / "assets/char/hero/mdl/main/work"
+    assert qapp.clipboard().text() == str(work / "hero_mdl_main_v003")
+    assert sorted(p.name for p in work.iterdir())[-1] == "notes.txt"  # nothing created
+
+
+def test_products_menu_has_no_next_version_entry(browser: Browser) -> None:
+    browser.set_view("products")
+    browser.cols[0].select_key("pants")
+    labels_ = menu_labels(actions.column_menu(browser, 0, browser.product()))
+    assert not any("next version" in label for label in labels_)

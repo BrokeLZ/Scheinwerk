@@ -237,7 +237,7 @@ area         work
 ### Workfiles
 
 ```bash
-sw next hero mdl --ext hip          # path of the next version: …/hero_mdl_main_v002.hip
+sw next hero mdl                    # path of the next version: …/hero_mdl_main_v002 (add --ext hip for the extension)
 sw latest hero --work mdl           # newest workfile of any DCC
 sw ingest ~/Downloads/old.hip hero mdl     # copy files in as new versions, one version each
 ```
@@ -252,7 +252,7 @@ V=$(sw next-usd hero asset)         # creates publish/_usd/asset/v00N/ and print
 sw finalize "$V" -m "first lookdev" --source "$(sw latest hero --work mdl)"
 
 sw next-publish hero pants          # publish/pants/v00N/
-sw next-media sq010_0010 render_beauty     # media/render_beauty/v00N/
+sw next-publish hero pants --file   # …/pants/v00N/hero_pants_v00N (folder created; add the extension in the DCC)
 sw latest hero --product pants      # newest version that has files (also --usd, --media)
 sw set-current <usd version folder> # roll a USD layer's pointer back (or forward)
 sw ingest scan.obj ref.jpg hero --product scan   # copies into one new version folder
@@ -296,8 +296,8 @@ It exits with 1 when it finds anything, so it can run in scripts.
 | `sw new asset\|category\|seq\|shot\|dept\|task\|product …` | Create things (see above). |
 | `sw ls [entity] [dept[/task]]` | List. |
 | `sw frames <entity> [START-END]` | Show or set a frame range. |
-| `sw next <entity> <dept[/task]> --ext E` | Next workfile path. |
-| `sw next-publish\|next-usd\|next-media <entity> <name>` | Create the next version folder. |
+| `sw next <entity> <dept[/task]> [--ext E]` | Next workfile path. |
+| `sw next-publish\|next-usd\|next-media <entity> <name> [--file]` | Create the next version folder; with `--file` print the file path in it (no extension). |
 | `sw latest <entity> --product N\|--usd L\|--media N\|--work D[/T]` | Newest version/workfile. |
 | `sw finalize <version_dir> [-m C] [--source P] [--main F]` | Write `version.json` (+ USD pointer). |
 | `sw set-current <usd_version_dir> [--main F]` | Point a USD layer at a version. |
@@ -343,8 +343,9 @@ There are no buttons for actions: everything is in the right-click menu of the c
 | Departments | New department ▸ (from the template, or Custom…); Copy path; Reveal |
 | Tasks | New task…; Copy path; Reveal |
 | A workfile | Open, Open with ▸, New version from this, Copy path / relative path, Reveal |
-| Anywhere in Files | New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path ▸**, Ingest file(s)… |
-| Products / media | New product… / New media…, **Copy next version folder** (creates it), Ingest file(s)…, Copy path, Reveal |
+| Anywhere in Files | New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path**, Ingest file(s)… |
+| Products / media | New product… / New media…, Ingest file(s)…, Copy path, Reveal |
+| Anywhere in Versions | **Copy next version path** (creates the new version folder) |
 | A version | Open folder, Finalize / Edit comment…, Set as current (USD), Copy path / relative path, Reveal |
 
 Also:
@@ -352,7 +353,17 @@ Also:
 - **Double-click** a workfile to open it, a version to reveal it in Finder/Explorer.
 - **Drag files** from Finder/Explorer onto a task (or into its Files column) to ingest them as new workfile versions, or onto a product/media name to ingest them as its next version. Originals are copied, never moved.
 
-The everyday loop with any DCC: right-click in Files → *Copy next version path ▸ .hip* → paste into the DCC's *Save As*. For exports: right-click the product → *Copy next version folder* → export there → right-click the new version → *Finalize*.
+The everyday loop with any DCC: right-click in Files → *Copy next version path* → paste into the DCC's *Save As*. For exports: select the product, right-click in **Versions** → *Copy next version path* → paste into the exporter → export → right-click the new version → *Finalize*.
+
+Copied paths end in the file name **without extension**; add it (and a frame number such as `$F4` or `####` for sequences) in the DCC:
+
+```text
+…/assets/char/hero/mdl/main/work/hero_mdl_main_v004                    → Save As: + .hip
+…/assets/char/hero/publish/base_model/v002/hero_base_model_v002        → export:  + .abc
+…/shots/sq010/sq010_0010/media/render_beauty/v004/sq010_0010_render_beauty_v004   → + .$F4.exr
+```
+
+In Versions, copying also creates the new version folder straight away, so two exports can't get the same number. A copy you end up not using leaves an empty version folder; `sw doctor` lists those, and you can delete them. In Files nothing is created.
 
 ### Choosing which application opens what
 

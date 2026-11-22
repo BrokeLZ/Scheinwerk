@@ -9,6 +9,7 @@ import pytest
 
 from scheinwerk.core.errors import InvalidName, ScheinwerkError
 from scheinwerk.core.templates import (
+    format_product_stem,
     format_version,
     format_workfile,
     parse_frames,
@@ -232,3 +233,22 @@ def test_parse_frames(text: str, frames: tuple[int, int]) -> None:
 def test_parse_frames_rejects(text: str) -> None:
     with pytest.raises(InvalidName):
         parse_frames(text)
+
+
+# --- next-version names without extension (copied paths) ---------------------
+
+
+@pytest.mark.parametrize(
+    ("args", "stem"),
+    [
+        (("hero", "base_model", 2), "hero_base_model_v002"),
+        (("sq010_0010", "render_beauty", 4), "sq010_0010_render_beauty_v004"),
+        (("hero", "asset", 1000), "hero_asset_v1000"),
+    ],
+)
+def test_format_product_stem(args: tuple, stem: str) -> None:
+    assert format_product_stem(*args) == stem
+
+
+def test_format_workfile_without_extension() -> None:
+    assert format_workfile("hero", "mdl", "main", 4) == "hero_mdl_main_v004"

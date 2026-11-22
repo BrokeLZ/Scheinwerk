@@ -248,9 +248,11 @@ class Task:
     def latest_workfile(self, ext: str | None = None) -> Workfile | None:
         return next((w for w in self.workfiles() if ext in (None, w.ext)), None)
 
-    def next_workfile(self, ext: str) -> Path:
-        """Path of the next version. Shared counter across all extensions (spec §5.4)."""
-        validate_extension(ext)
+    def next_workfile(self, ext: str | None = None) -> Path:
+        """Path of the next version, without extension if `ext` is None (the DCC adds it on
+        Save As). Shared counter across all extensions (spec §5.4)."""
+        if ext is not None:
+            validate_extension(ext)
         version = max((w.version for w in self.workfiles()), default=0) + 1
         name = format_workfile(self.entity.name, self.department.name, self.name, version, ext)
         return self.work_dir / name

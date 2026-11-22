@@ -103,6 +103,11 @@ def test_empty_task(task: Task) -> None:
     assert not task.next_workfile("hip").exists()  # just a path
 
 
+def test_next_workfile_without_extension(task: Task) -> None:
+    touch(task.work_dir / "hero_mdl_main_v003.nk")
+    assert task.next_workfile() == task.work_dir / "hero_mdl_main_v004"
+
+
 def test_counter_shared_across_extensions(task: Task) -> None:
     touch(task.work_dir / "hero_mdl_main_v001.hip")
     touch(task.work_dir / "hero_mdl_main_v002.nk")

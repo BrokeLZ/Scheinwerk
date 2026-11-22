@@ -72,8 +72,10 @@ def parse_version(text: str) -> int | None:
     return int(match[1]) if match else None
 
 
-def format_workfile(entity: str, dept: str, task: str, version: int, ext: str) -> str:
-    return f"{entity}_{dept}_{task}_{format_version(version)}.{ext}"
+def format_workfile(entity: str, dept: str, task: str, version: int, ext: str | None = None) -> str:
+    """`hero_mdl_main_v003.hip`, or without `ext` just `hero_mdl_main_v003`."""
+    stem = f"{entity}_{dept}_{task}_{format_version(version)}"
+    return f"{stem}.{ext}" if ext else stem
 
 
 def parse_workfile(filename: str, entity: str, dept: str, task: str) -> tuple[int, str] | None:
@@ -101,3 +103,9 @@ def parse_frames(text: str) -> tuple[int, int]:
     if not match:
         raise InvalidName(f"Invalid frame range {text!r}: expected START-END such as 1001-1096.")
     return int(match[1]), int(match[2])
+
+
+def format_product_stem(entity: str, product: str, version: int) -> str:
+    """`hero_base_model_v002`: the recommended product/media file name (spec §5.3) without
+    frame and extension. Copied "next version" paths end in it; the DCC adds the rest."""
+    return f"{entity}_{product}_{format_version(version)}"

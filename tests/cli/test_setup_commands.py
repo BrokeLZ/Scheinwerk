@@ -322,3 +322,18 @@ def test_gui_starts_its_own_process(sw, inside: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr("scheinwerk.cli.subprocess.call", lambda cmd: calls.append(cmd) or 0)
     assert sw("gui", "assets").code == 0
     assert calls[0][1:] == ["-m", "scheinwerk.gui", str(inside / "assets")]
+
+
+def test_next_without_extension(sw, hero: Path) -> None:
+    r = sw("next", "hero", "mdl/main", "--relative")
+    assert r.out == "assets/hero/mdl/main/work/hero_mdl_main_v001\n"
+
+
+def test_next_publish_file(sw, hero: Path) -> None:
+    r = sw("next-publish", "hero", "pants", "--file", "--relative")
+    assert r.out == "assets/hero/publish/pants/v002/hero_pants_v002\n"
+    assert (hero / "publish/pants/v002").is_dir()
+    r = sw("next-media", "hero", "turntable", "--file", "--relative")
+    assert r.out == "assets/hero/media/turntable/v004/hero_turntable_v004\n"
+    r = sw("next-usd", "hero", "asset", "--file", "--relative")
+    assert r.out == "assets/hero/publish/_usd/asset/v003/hero_asset_v003\n"

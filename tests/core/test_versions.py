@@ -168,3 +168,33 @@ def test_file_sequences(tmp_path) -> None:
 def test_single_numbered_file_is_still_a_sequence(tmp_path) -> None:
     [group] = file_sequences([tmp_path / "plate.1001.exr"])
     assert (group.label, group.frames, group.count) == ("plate.####.exr", (1001, 1001), 1)
+
+
+# --- next version path (folder + file name, no extension) ----------------------
+
+
+def test_next_version_path_creates_the_folder(proj: Project, hero: Entity) -> None:
+    product = Product(proj, hero.path / "publish/base_model")
+    touch(product.path / "v001/hero_base_model_v001.abc")
+    path = product.next_version_path()
+    assert path == product.path / "v002/hero_base_model_v002"
+    assert path.parent.is_dir()
+    assert not path.exists()
+    assert product.next_version_path().parent.name == "v003"  # each call reserves one
+
+
+def test_next_version_path_kinds(proj: Project, hero: Entity) -> None:
+    layer = Product(proj, hero.path / "publish/_usd/asset")
+    assert layer.next_version_path().name == "hero_asset_v001"
+    shot = proj.create_shot("sq010_0010")
+    media = Product(proj, shot.path / "media/render_beauty")
+    assert media.next_version_path().name == "sq010_0010_render_beauty_v001"
+    cam = Product(proj, proj.entity("sq010").path / "publish/cam")
+    assert cam.next_version_path().name == "sq010_cam_v001"
+
+
+def test_next_version_path_invalid_name_creates_nothing(proj: Project, hero: Entity) -> None:
+    product = Product(proj, hero.path / "publish/Base Model")
+    with pytest.raises(InvalidName):
+        product.next_version_path()
+    assert not product.path.exists()

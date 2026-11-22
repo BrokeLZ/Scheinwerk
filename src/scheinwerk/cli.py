@@ -24,9 +24,6 @@ from scheinwerk.core.project import Project
 from scheinwerk.core.publish import (
     finalize,
     ingest,
-    next_media,
-    next_publish,
-    next_usd,
     set_current,
 )
 from scheinwerk.core.templates import parse_frames, validate_name
@@ -360,10 +357,16 @@ def cmd_next(args: argparse.Namespace) -> None:
     _emit(args, project, task.next_workfile(args.ext))
 
 
-def _cmd_next_version(func: Callable[[Entity, str], Path]) -> Callable[[argparse.Namespace], None]:
+def _cmd_next_version(*area: str) -> Callable[[argparse.Namespace], None]:
+    """next-publish / next-usd / next-media: `area` is publish, publish/_usd or media."""
+
     def run(args: argparse.Namespace) -> None:
         project = _project()
-        _emit(args, project, func(project.entity(args.entity), args.name))
+        product = Product(project, project.entity(args.entity).path.joinpath(*area, args.name))
+        if args.file:
+            _emit(args, project, product.next_version_path())
+        else:
+            _emit(args, project, product.next_version_dir())
 
     return run
 
@@ -572,16 +575,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("next", cmd_next, "print the next workfile path (creates nothing)")
     p.add_argument("entity")
     p.add_argument("task", metavar="dept[/task]")
-    p.add_argument("--ext", required=True, help="file extension without the dot, e.g. hip")
+    p.add_argument("--ext", help="add this extension (without the dot, e.g. hip)")
 
-    for name, func, what in (
-        ("next-publish", next_publish, "product"),
-        ("next-usd", next_usd, "USD layer"),
-        ("next-media", next_media, "media"),
+    for name, area, what in (
+        ("next-publish", ("publish",), "product"),
+        ("next-usd", ("publish", "_usd"), "USD layer"),
+        ("next-media", ("media",), "media"),
     ):
-        p = add(name, _cmd_next_version(func), f"create and print the next {what} version folder")
+        p = add(name, _cmd_next_version(*area), f"create and print the next {what} version folder")
         p.add_argument("entity")
         p.add_argument("name", metavar="layer" if what == "USD layer" else "name")
+        p.add_argument(
+            "--file",
+            action="store_true",
+            help="print the file path in it, without extension: …/v002/hero_pants_v002",
+        )
 
     p = add("latest", cmd_latest, "print the latest version folder or workfile")
     p.add_argument("entity")

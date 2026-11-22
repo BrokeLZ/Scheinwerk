@@ -252,9 +252,7 @@ def _file_menu(b: Browser, menu: QMenu, data: object) -> None:
             f".{ext}" + ("" if has_template else "  (no template)"),
             (lambda e=ext: new_empty(e)) if has_template else None,
         )
-    sub = menu.addMenu("Copy next version path")
-    for ext in exts:
-        _add(sub, f".{ext}", lambda e=ext: _copy(str(task.next_workfile(e))))
+    _add(menu, "Copy next version path", lambda: _copy(str(task.next_workfile())))
     _add(menu, "Ingest file(s)…", lambda: _ingest(b, task))
 
 
@@ -278,13 +276,7 @@ def _product_menu(b: Browser, menu: QMenu, data: object) -> None:
             b.remember(0, name)
             b.run(entity.create_media if media else entity.create_product, name)
 
-    def copy_next() -> None:
-        folder = b.run(product.next_version_dir)
-        if folder:
-            _copy(str(folder))
-
     _add(menu, "New media…" if media else "New product…", new)
-    _add(menu, "Copy next version folder", copy_next if product else None)
     _add(menu, "Ingest file(s)…", (lambda: _ingest(b, product)) if product else None)
     _path_actions(b, menu, product.path if product else None, relative=False)
 
@@ -294,10 +286,22 @@ def _usd_files(version: Version) -> list[str]:
 
 
 def _version_menu(b: Browser, menu: QMenu, data: object) -> None:
-    if not isinstance(data, Version):
-        _add(menu, "Select a version first", None)
-        return
     product = b.product()
+    if product is None:
+        _add(menu, "Select a product first", None)
+        return
+
+    def copy_next() -> None:
+        path = b.run(product.next_version_path)  # creates the v### folder
+        if path:
+            _copy(str(path))
+            b.remember(1, path.parent.name)
+            b.reload()  # show and select the new (still empty) version
+
+    _add(menu, "Copy next version path", copy_next)
+    if not isinstance(data, Version):
+        return
+    menu.addSeparator()
 
     def do_finalize() -> None:
         usd = _usd_files(data) if product.usd else []

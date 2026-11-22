@@ -145,6 +145,7 @@ When the sequence isn't known yet (`sw new shot sq010_0010` creates it), a shot 
 
 - Workfile names are **enforced** for files Scheinwerk creates. A file in `work/` is *managed* only if its whole name matches the template filled in from its **folders** (entity, dept, task), with a lowercase `[a-z0-9]+` extension. Anything else is *unmanaged*: a different prefix, a suffix like `_final`, an uppercase `.HIP`, a nested subfolder. Unmanaged files are shown, never hidden or touched.
 - Names of files **inside** a version folder are recommended, not enforced. Everything in a version folder belongs to that version.
+- Copied next-version paths carry no extension: the DCC adds it (and any frame number) when saving or exporting. Workfiles: `…/work/hero_mdl_main_v004` (`Task.next_workfile()`, `sw next` without `--ext`). Products, USD layers and media: the reserved version folder plus the recommended name without frame and extension, `…/base_model/v002/hero_base_model_v002` (`Product.next_version_path()`, `sw next-publish --file`).
 - No comments in filenames.
 - Versions are written with 3 digits. Readers accept `v[0-9]{3,}` (ASCII digits only, v1000+ keeps working). Uppercase `V001` is not a version.
 - Frames are 4-digit and start at 1001 by default.
@@ -406,8 +407,9 @@ validate_extension(ext) -> None                  # "hip": lowercase [a-z0-9]+, n
 parse_frames(text) -> tuple[int, int]            # "1001-1096"
 shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
 format_version(n) -> str / parse_version(text) -> int | None
-format_workfile(entity, dept, task, version, ext) -> str
+format_workfile(entity, dept, task, version, ext=None) -> str   # no ext: hero_mdl_main_v003
 parse_workfile(filename, entity, dept, task) -> tuple[int, str] | None   # None = unmanaged
+format_product_stem(entity, product, version) -> str     # hero_base_model_v002
 
 # fileio.py
 write_text(path, text) / write_json(path, data)  # atomic, LF, skips identical content
@@ -459,13 +461,14 @@ Task:
     .workfiles() -> list[Workfile]          # newest first
     .unmanaged() -> list[Path]
     .latest_workfile(ext=None) -> Workfile | None
-    .next_workfile(ext) -> Path
+    .next_workfile(ext=None) -> Path      # without ext: no extension
     .new_version_from(workfile) -> Path     # copy + bump
     .new_empty_workfile(ext) -> Path        # copy of shared/templates/empty.<ext>, NotFound if missing
 Workfile: .path .version .ext
 
 # versions.py
 Product(project, path): .name .usd .is_media .kind .valid .pointer .versions() .latest() .current() .next_version_dir() -> Path
+    .next_version_path() -> Path   # creates the next v### folder, returns …/v002/hero_base_model_v002
 Version(project, path): .number .path .info -> dict | None .files() .empty
 file_sequences(paths) -> list[FileGroup]    # FileGroup: .label ("name.####.exr") .paths .frames .count .missing
 
@@ -519,10 +522,10 @@ sw new dept <entity> <dept> [--tasks a b]   # default tasks: the template's, els
 sw new task <entity> <dept> <task>
 sw new product <entity> <name>
 sw ls [entity] [dept[/task]]
-sw next <entity> <dept>[/<task>] --ext hip  # next workfile path, creates nothing
-sw next-publish <entity> <name>             # creates + prints next version folder
-sw next-usd <entity> <layer>
-sw next-media <entity> <name>
+sw next <entity> <dept>[/<task>] [--ext hip]  # next workfile path (no extension unless --ext), creates nothing
+sw next-publish <entity> <name> [--file]     # creates + prints next version folder,
+sw next-usd <entity> <layer> [--file]        # or with --file the file path in it, no extension
+sw next-media <entity> <name> [--file]
 sw latest <entity> (--product N | --usd L | --media N | --work dept[/task])
 sw frames <entity> [START-END]              # show or set; sequences show their shots' range
 sw finalize <version_dir> [-m comment] [--source path] [--main file]
@@ -589,9 +592,10 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 | Departments | New department ▸ (template entries + Custom…) · Copy path · Reveal |
 | Tasks | New task · Copy path · Reveal |
 | Workfiles (file) | Open · Open with ▸ · New version from this · Copy path · Copy relative path · Reveal |
-| Workfiles (empty space or file) | New empty workfile ▸ (ext) · **Copy next version path ▸ (ext)** · Ingest file(s)… |
-| Products / Media list | New product… / New media… (name prompt) · **Copy next version folder** · Ingest file(s)… · Copy path · Reveal |
-| Versions | Open folder · Finalize / Edit comment · Set as current (USD) · Copy path · Copy relative path · Reveal |
+| Workfiles (empty space or file) | New empty workfile ▸ (ext) · **Copy next version path** · Ingest file(s)… |
+| Products / Media list | New product… / New media… (name prompt) · Ingest file(s)… · Copy path · Reveal |
+| Versions (empty space or version) | **Copy next version path** |
+| Versions (version) | Open folder · Finalize / Edit comment · Set as current (USD) · Copy path · Copy relative path · Reveal |
 
 Other interactions:
 
@@ -600,7 +604,8 @@ Other interactions:
 - F5 = Reload, plus an automatic refresh when the window regains focus (at most every 2 s).
 - The entity menu offers asset/category entries in Assets mode and sequence/shot entries in Shots mode. "New asset" takes `name` or `category/name` and pre-fills the selected category; "New shot" pre-fills `<selected sequence>_`.
 - "Open" uses the application configured for the extension in the user settings (§8.4, `dcc`), else the OS default. "Open with ▸" lists every configured application plus the system default.
-- Extension lists (New empty workfile, Copy next version path): `hip`, `nk`, `blend`, the `dcc` extensions from the user settings, the `shared/templates/empty.<ext>` templates and the extensions already in the task. New empty workfile is enabled only where a template exists.
+- Extension list for New empty workfile: `hip`, `nk`, `blend`, the `dcc` extensions from the user settings, the `shared/templates/empty.<ext>` templates and the extensions already in the task. New empty workfile is enabled only where a template exists.
+- "Copy next version path" copies a path without extension (§5.3). In Files it creates nothing. In Versions it creates the next `v###` folder (reserving the number), copies `…/v###/{entity}_{name}_v###` and selects the new, still empty version.
 - "Finalize / Edit comment" asks for the comment (pre-filled) and, for a USD version with several `.usd` files, which one is the main file.
 - After creating something the browser selects it. Errors from core appear in a message box.
 - Open and reveal go through one helper per OS (`core/system.py`): macOS `open` / `open -a <app>` / `open -R`, Windows `os.startfile` / the app's exe / `explorer /select,`, Linux `xdg-open`.
@@ -659,7 +664,7 @@ Integrations are installed persistently (no launcher needed). On every file open
 
 ### 13.5 Any other DCC
 
-No integration needed: "Copy next version path" → Save As; "Copy next version folder" → export; optional Finalize in the GUI; ingest for tools that write elsewhere.
+No integration needed: "Copy next version path" in Files → Save As; "Copy next version path" in Versions → export (add the extension and frame number the DCC needs); optional Finalize in the GUI; ingest for tools that write elsewhere.
 
 ---
 

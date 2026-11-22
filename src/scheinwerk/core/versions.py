@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from scheinwerk.core.context import Context
 from scheinwerk.core.errors import InvalidName
 from scheinwerk.core.fileio import read_json
-from scheinwerk.core.templates import parse_version, validate_name
+from scheinwerk.core.templates import format_product_stem, parse_version, validate_name
 from scheinwerk.core.usd_pointer import read_pointer
 
 if TYPE_CHECKING:
@@ -95,6 +96,13 @@ class Product:
         return (
             Version(self.project, self.path / folder) if parse_version(folder) is not None else None
         )
+
+    def next_version_path(self) -> Path:
+        """Create the next v### folder and return the file path in it without extension:
+        `…/base_model/v002/hero_base_model_v002` (spec §5.3). Nothing else is created."""
+        entity = Context.from_path(self.path).entity
+        folder = self.next_version_dir()
+        return folder / format_product_stem(entity, self.name, parse_version(folder.name))
 
     def next_version_dir(self) -> Path:
         """Create and return the next v### folder. Never reuses an existing one."""
