@@ -304,3 +304,21 @@ def test_frames(sw, inside: Path) -> None:
     assert sw("frames", "sq010").out == "1001-1096\n"
     assert sw("frames", "sq010", "1-2").code == 1
     assert sw("frames", "sq010_0010", "1096-1001").code == 1
+
+
+# --- gui ----------------------------------------------------------------------
+
+
+def test_gui_without_pyside(sw, inside: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("scheinwerk.cli._has_pyside", lambda: False)
+    r = sw("gui")
+    assert r.code == 1
+    assert "uv sync --extra gui" in r.err
+
+
+def test_gui_starts_its_own_process(sw, inside: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr("scheinwerk.cli._has_pyside", lambda: True)
+    monkeypatch.setattr("scheinwerk.cli.subprocess.call", lambda cmd: calls.append(cmd) or 0)
+    assert sw("gui", "assets").code == 0
+    assert calls[0][1:] == ["-m", "scheinwerk.gui", str(inside / "assets")]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -106,3 +107,40 @@ class Product:
                 return folder
             except FileExistsError:
                 number += 1  # someone else got there first
+
+
+@dataclass(frozen=True)
+class FileGroup:
+    """One file, or a numbered sequence shown as `name.####.ext` (spec §12.1, Media view)."""
+
+    label: str
+    paths: tuple[Path, ...]
+    frames: tuple[int, int] | None = None
+
+    @property
+    def count(self) -> int:
+        return len(self.paths)
+
+    @property
+    def missing(self) -> int:
+        return self.frames[1] - self.frames[0] + 1 - self.count if self.frames else 0
+
+
+_FRAME = re.compile(r"(?P<head>.+)\.(?P<frame>[0-9]+)\.(?P<ext>[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)?)")
+
+
+def file_sequences(paths: list[Path]) -> list[FileGroup]:
+    """Group `name.<frame>.<ext>` files into sequences; other files stay single. Sorted by label."""
+    sequences: dict[str, list[tuple[int, Path]]] = {}
+    groups = []
+    for path in paths:
+        match = _FRAME.fullmatch(path.name)
+        if match:
+            label = f"{match['head']}.{'#' * len(match['frame'])}.{match['ext']}"
+            sequences.setdefault(label, []).append((int(match["frame"]), path))
+        else:
+            groups.append(FileGroup(path.name, (path,)))
+    for label, items in sequences.items():
+        items.sort()
+        groups.append(FileGroup(label, tuple(p for _, p in items), (items[0][0], items[-1][0])))
+    return sorted(groups, key=lambda g: g.label)

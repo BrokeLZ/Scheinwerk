@@ -4,28 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os
-import sys
 from pathlib import Path
+
+from scheinwerk.core import settings
 
 HOOK_NAMES = ("post_create", "post_save", "post_publish")
 
 log = logging.getLogger("scheinwerk.hooks")
 
 
-def user_dir() -> Path:
-    """The machine-local settings folder (spec §8.4)."""
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Scheinwerk"
-    if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA")
-        return (Path(appdata) if appdata else Path.home() / "AppData" / "Roaming") / "Scheinwerk"
-    return Path.home() / ".config" / "scheinwerk"
-
-
 def hook_files(root: Path | None) -> list[Path]:
     """Project hooks first, then user hooks. Files starting with `_` are skipped."""
-    folders = ([root / "shared" / "hooks"] if root else []) + [user_dir() / "hooks"]
+    folders = ([root / "shared" / "hooks"] if root else []) + [settings.user_dir() / "hooks"]
     return [
         f for folder in folders for f in sorted(folder.glob("*.py")) if not f.name.startswith("_")
     ]

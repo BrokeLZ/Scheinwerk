@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from scheinwerk.core import hooks
+from scheinwerk.core import settings
 from scheinwerk.core.project import DEFAULTS, Project
 
 
 @pytest.fixture(autouse=True)
 def user_dir(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Never load hooks from the real machine-local settings folder during tests."""
+    """Never touch the real machine-local settings folder (hooks, settings.json) in tests."""
     folder = tmp_path_factory.mktemp("userdir")
-    monkeypatch.setattr(hooks, "user_dir", lambda: folder)
+    monkeypatch.setattr(settings, "user_dir", lambda: folder)
     return folder
 
 

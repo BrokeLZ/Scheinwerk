@@ -7,7 +7,7 @@ import pytest
 from scheinwerk.core.entities import Entity
 from scheinwerk.core.errors import AlreadyExists, InvalidName
 from scheinwerk.core.project import Project
-from scheinwerk.core.versions import Product
+from scheinwerk.core.versions import Product, file_sequences
 from tests.conftest import touch
 
 
@@ -136,3 +136,35 @@ def test_current_usd_version(proj: Project, hero: Entity) -> None:
     )
     assert layer.current().number == 2
     assert Product(proj, hero.path / "publish/pants").current() is None
+
+
+# --- media and file summaries -----------------------------------------------
+
+
+def test_create_media(hero: Entity) -> None:
+    media = hero.create_media("turntable")
+    assert media.path == hero.path / "media/turntable"
+    assert media.is_media and media.path.is_dir()
+    with pytest.raises(AlreadyExists):
+        hero.create_media("turntable")
+    with pytest.raises(InvalidName):
+        hero.create_media("Turn Table")
+
+
+def test_file_sequences(tmp_path) -> None:
+    names = [f"sq010_0010_render_beauty_v004.{f}.exr" for f in (1001, 1002, 1003, 1005)]
+    names += ["cache.0001.bgeo.sc", "cache.0002.bgeo.sc", "preview.mov", "notes.v2.txt"]
+    paths = [tmp_path / n for n in names]
+    groups = file_sequences(paths)
+    assert [(g.label, g.frames, g.count, g.missing) for g in groups] == [
+        ("cache.####.bgeo.sc", (1, 2), 2, 0),
+        ("notes.v2.txt", None, 1, 0),
+        ("preview.mov", None, 1, 0),
+        ("sq010_0010_render_beauty_v004.####.exr", (1001, 1005), 4, 1),
+    ]
+    assert groups[3].paths[0].name == "sq010_0010_render_beauty_v004.1001.exr"
+
+
+def test_single_numbered_file_is_still_a_sequence(tmp_path) -> None:
+    [group] = file_sequences([tmp_path / "plate.1001.exr"])
+    assert (group.label, group.frames, group.count) == ("plate.####.exr", (1001, 1001), 1)

@@ -11,6 +11,7 @@ from scheinwerk.core.errors import InvalidName, ScheinwerkError
 from scheinwerk.core.templates import (
     format_version,
     format_workfile,
+    parse_frames,
     parse_version,
     parse_workfile,
     shot_sequence,
@@ -217,3 +218,17 @@ def test_parse_workfile_accepts_extra_version_digits() -> None:
 )
 def test_parse_workfile_unmanaged(filename: str) -> None:
     assert parse_workfile(filename, "hero", "mdl", "main") is None
+
+
+# --- frame ranges -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("text", "frames"), [("1001-1096", (1001, 1096)), (" 1 - 24 ", (1, 24))])
+def test_parse_frames(text: str, frames: tuple[int, int]) -> None:
+    assert parse_frames(text) == frames
+
+
+@pytest.mark.parametrize("text", ["1001", "1001-", "a-b", "1001..1096", "-5-10", ""])
+def test_parse_frames_rejects(text: str) -> None:
+    with pytest.raises(InvalidName):
+        parse_frames(text)

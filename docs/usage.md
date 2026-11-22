@@ -48,7 +48,7 @@ uv tool install --editable /path/to/Scheinwerk
 | Task | Command |
 | --- | --- |
 | Install / update the environment | `uv sync` (add `--extra gui` for PySide6) |
-| Run all tests | `uv run pytest` |
+| Run all tests | `uv run pytest` (the GUI tests in `tests/gui` only run after `uv sync --extra gui`; CI skips them) |
 | Run core tests, stop at first failure | `uv run pytest tests/core -x` |
 | Run one test | `uv run pytest tests/core/test_stdlib_only.py::test_core_imports_only_stdlib` |
 | Lint | `uv run ruff check .` |
@@ -305,10 +305,75 @@ It exits with 1 when it finds anything, so it can run in scripts.
 | `sw context [path]` | What a path means. |
 | `sw env [path] [--shell zsh\|bash\|pwsh]` | `SW_*` variables. |
 | `sw doctor` | Report problems. |
+| `sw gui [path]` | Open the browser (see [GUI](#gui)). |
 
 ## GUI
 
-*Not yet available. Arrives in Phase 3.*
+![The Scheinwerk browser, Scenefiles view](images/gui-scenefiles.png)
+
+### Starting it
+
+The GUI needs PySide6, the `gui` extra: run `uv sync --extra gui` once in the repo. (A plain `uv sync` removes it again, so keep `--extra gui` from then on.)
+
+```bash
+sw gui                         # opens your most recent project
+sw gui .                       # opens the project you're in, at the asset/shot/task you're in
+uv run scheinwerk-gui          # the same, without the CLI
+```
+
+### Finding your way
+
+- **Top bar.** *Scenefiles / Products / Media* switch the view. The dropdown holds your recent projects. `?` shows a cheat sheet, `+` makes a new project or adds an existing one, *Reload* (or F5) re-reads the disk. The browser also reloads by itself when its window gets focus.
+- **Left column.** *Assets* (grouped by category) or *Shots* (grouped by sequence; `sq010 (sequence)` is the sequence-level work area `_seq`).
+- **Scenefiles view.** Departments, tasks, then the task's workfiles, newest first. Files that don't follow the naming are shown *in italics* (unmanaged). A department with one task selects it for you.
+- **Products / Media views.** Products (USD layers first), their versions (`(current)` marks the version the USD pointer uses, empty versions are in italics) and the files in a version. Image sequences show as one line: `name.####.exr  1001-1096 (96)`.
+- **Detail panel** (under Departments/Tasks): path, latest version and frame range, or for a version: source, comment, date, user.
+- **Filter.** Click into any column and just type; a filter field appears. Esc clears it.
+- Each view remembers what you had selected, as long as the window is open.
+
+![Products view](images/gui-products.png)
+
+### Doing things: right-click
+
+There are no buttons for actions: everything is in the right-click menu of the column it concerns.
+
+| Right-click on | You get |
+| --- | --- |
+| Assets / shots | New asset… (type `name` or `category/name`), New category…, or New sequence…, New shot…; Set frame range…; Copy path / relative path; Reveal |
+| Departments | New department ▸ (from the template, or Custom…); Copy path; Reveal |
+| Tasks | New task…; Copy path; Reveal |
+| A workfile | Open, Open with ▸, New version from this, Copy path / relative path, Reveal |
+| Anywhere in Files | New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path ▸**, Ingest file(s)… |
+| Products / media | New product… / New media…, **Copy next version folder** (creates it), Ingest file(s)…, Copy path, Reveal |
+| A version | Open folder, Finalize / Edit comment…, Set as current (USD), Copy path / relative path, Reveal |
+
+Also:
+
+- **Double-click** a workfile to open it, a version to reveal it in Finder/Explorer.
+- **Drag files** from Finder/Explorer onto a task (or into its Files column) to ingest them as new workfile versions, or onto a product/media name to ingest them as its next version. Originals are copied, never moved.
+
+The everyday loop with any DCC: right-click in Files → *Copy next version path ▸ .hip* → paste into the DCC's *Save As*. For exports: right-click the product → *Copy next version folder* → export there → right-click the new version → *Finalize*.
+
+### Choosing which application opens what
+
+*Open* uses your operating system's default app, unless you set one per extension in your settings file (`~/Library/Application Support/Scheinwerk/settings.json` on macOS, `%APPDATA%\Scheinwerk\settings.json` on Windows; created the first time you run the GUI):
+
+```json
+{
+  "schema": 1,
+  "dcc": {
+    "hip":   { "name": "Houdini", "exe": "/Applications/Houdini/Houdini21.0.512/Houdini FX 21.0.512.app" },
+    "nk":    { "name": "Nuke",    "exe": "C:\\Program Files\\Nuke16.0v1\\Nuke16.0.exe" },
+    "blend": { "name": "Blender", "exe": "/Applications/Blender.app" }
+  }
+}
+```
+
+On macOS `exe` is the `.app`, on Windows the `.exe`. Every app listed here also appears under *Open with ▸*. The same file stores your recent projects and the window size; it never goes into a project.
+
+### Changing the look
+
+All colours, fonts and spacing are in `src/scheinwerk/gui/theme.qss` (Qt style sheets, like CSS). Edit it and restart the GUI.
 
 ## DCC integrations
 
@@ -330,4 +395,6 @@ Until then, any DCC works by hand: create folders and names following the conven
 | `sw: command not found` | Use `uv run sw` inside the repo, or install it as a tool (see [Install](#install)). |
 | `sw: error: Not inside a Scheinwerk project` | `cd` into a project (any folder below its `scheinwerk.json`) or run `sw init`. |
 | `sw: error: 'x' is ambiguous` | Prefix the name: `asset:x`, `shot:x` or `seq:x`. |
+| `sw: error: The GUI needs PySide6` | `uv sync --extra gui` in the repo (and keep `--extra gui` on later syncs). |
+| *Open* starts the wrong application | Set the app for that extension in `settings.json`, see [GUI](#choosing-which-application-opens-what). |
 | Tests use the wrong Python | Run through `uv run`, which uses the repo's 3.11 environment. `uv sync` recreates it. |

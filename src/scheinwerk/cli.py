@@ -7,8 +7,9 @@ Core errors become `sw: error: …` on stderr and exit code 1; usage errors exit
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
-import re
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -28,7 +29,7 @@ from scheinwerk.core.publish import (
     next_usd,
     set_current,
 )
-from scheinwerk.core.templates import validate_name
+from scheinwerk.core.templates import parse_frames, validate_name
 from scheinwerk.core.versions import Product
 
 # --- helpers ----------------------------------------------------------------
@@ -97,10 +98,10 @@ def _task(entity: Entity, spec: str) -> Task:
 
 
 def _frame_range(text: str) -> tuple[int, int]:
-    match = re.fullmatch(r"(\d+)-(\d+)", text)
-    if not match:
-        raise argparse.ArgumentTypeError(f"expected START-END such as 1001-1096, got {text!r}")
-    return int(match[1]), int(match[2])
+    try:
+        return parse_frames(text)
+    except InvalidName as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _frames_text(frames: tuple[int, int] | None) -> str:
@@ -489,6 +490,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if issues else 0
 
 
+def _has_pyside() -> bool:
+    return importlib.util.find_spec("PySide6") is not None
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    """Start the GUI as its own process: the CLI never imports GUI code (core <- cli <- gui)."""
+    if not _has_pyside():
+        raise ScheinwerkError(
+            "The GUI needs PySide6. In the Scheinwerk repo run: uv sync --extra gui"
+        )
+    command = [sys.executable, "-m", "scheinwerk.gui"]
+    if args.path:
+        command.append(str(Path(args.path).absolute()))
+    return subprocess.call(command)
+
+
 # --- parser -----------------------------------------------------------------
 
 
@@ -612,6 +629,9 @@ def build_parser() -> argparse.ArgumentParser:
         cmd_doctor,
         "report naming problems, conflict copies, absolute paths, empty versions",
     )
+
+    p = add("gui", cmd_gui, "open the Scheinwerk browser", parents=())
+    p.add_argument("path", nargs="?", help="open the project (and select what) this path points at")
     return parser
 
 

@@ -330,7 +330,9 @@ Location: `~/Library/Application Support/Scheinwerk/settings.json` (macOS), `%AP
 }
 ```
 
-An extension with no entry opens with the OS default application.
+An extension with no entry opens with the OS default application. `exe` is an `.app` bundle on macOS and an executable on Windows.
+
+Missing keys are filled from these defaults when reading; a missing or broken file reads as the defaults. `recent_projects` holds at most 10 entries, newest first. The GUI writes `last_view` and `geometry` (`[x, y, w, h]`) when its window closes. The folder also holds user hooks (§14).
 
 ---
 
@@ -401,6 +403,7 @@ Stdlib only. Paths are `pathlib.Path` at runtime and root-relative POSIX `str` w
 # templates.py
 validate_name(kind, name, *, seq=None) -> None   # kind: project category asset sequence shot dept task product media layer
 validate_extension(ext) -> None                  # "hip": lowercase [a-z0-9]+, no dot
+parse_frames(text) -> tuple[int, int]            # "1001-1096"
 shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
 format_version(n) -> str / parse_version(text) -> int | None
 format_workfile(entity, dept, task, version, ext) -> str
@@ -449,6 +452,7 @@ Entity  # Asset, Shot and Sequence are one class told apart by .type ("asset" | 
     .products(usd=None) -> list[Product]    # USD layers first
     .media() -> list[Product]
     .create_product(name) -> Product
+    .create_media(name) -> Product
 Department: .entity .name .path .custom .valid .tasks() .task(name) .create_task(name)   # dept folder must exist
 Task:
     .entity .name .path .work_dir .cache_dir .custom .valid
@@ -463,6 +467,7 @@ Workfile: .path .version .ext
 # versions.py
 Product(project, path): .name .usd .is_media .kind .valid .pointer .versions() .latest() .current() .next_version_dir() -> Path
 Version(project, path): .number .path .info -> dict | None .files() .empty
+file_sequences(paths) -> list[FileGroup]    # FileGroup: .label ("name.####.exr") .paths .frames .count .missing
 
 # publish.py
 next_publish(entity, name) -> Path
@@ -477,7 +482,15 @@ env_for(context) -> dict[str, str]
 
 # hooks.py
 run_hook(name, **kwargs) -> None            # see §14
-user_dir() -> Path                          # machine-local settings folder (§8.4)
+
+# settings.py  (machine-local, §8.4)
+user_dir() -> Path / settings_path() -> Path
+load_settings() -> dict / save_settings(data)
+add_recent_project(root) / app_for(settings, ext) -> str | None
+
+# system.py  (one helper per OS)
+open_path(path, app=None) / reveal(path)
+open_command(path, app=None) / reveal_command(path)   # the commands, for tests
 
 # doctor.py
 check(project) -> list[Issue]               # Issue(kind, path, detail); report only (§11)
@@ -537,7 +550,7 @@ sw gui [path]                               # Phase 3
 
 ## 12. GUI
 
-PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWidget`s (not `QMainWindow`), so Houdini and Nuke can dock them.
+PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWidget`s (not `QMainWindow`), so Houdini and Nuke can dock them. The browser (`gui/browser.py: Browser`) applies `theme.qss` to itself, never to the `QApplication`, so it can't restyle a host DCC. `gui/app.py` is only a window around it for standalone use. Start it with `sw gui [path]` (runs `python -m scheinwerk.gui` as its own process, so the CLI never imports GUI code) or `scheinwerk-gui [path]`.
 
 ### 12.1 Layout
 
@@ -554,13 +567,16 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 
 - **Top bar** is identical in every view: view switch, project dropdown (recent projects), `?` (shortcuts/help), `+` (new project / add existing project), Reload.
 - **Entity column** is the same in every view: Assets/Shots toggle above a tree. Assets are grouped by category if present. Shots are grouped by sequence, and each sequence's `_seq` level is its first child, labelled `<seq> (sequence)`.
-- All columns have type-to-filter. Columns are separated by splitters.
+- All columns have type-to-filter: typing in a focused column shows a filter field under it, Backspace edits it, Esc clears and hides it. Columns are separated by splitters, the detail panel sits under columns 2–3 and column 4 runs full height (as in the mock-up).
+- Asset tree: uncategorised assets first, then one group per category (empty categories too).
+- Dimmed (italic, `dimColor` from the theme): unmanaged files, empty versions, invalid names. Custom departments/tasks show `(custom)`.
+- On start: the project and entity/department/task of `path` if given, else the most recent project that still exists, else an empty browser that says to use `+`.
 
 | View | Column 2 | Column 3 | Column 4 | Detail panel |
 | --- | --- | --- | --- | --- |
 | Scenefiles | Departments | Tasks | Workfiles, newest first (+ unmanaged, dimmed) | path, latest version, frame range |
-| Products | Products (`_usd` layers grouped first) | Versions | Files in version | source workfile, comment, date; current marker for USD |
-| Media | Media names | Versions | Files / frame range summary | source, comment, date |
+| Products | Products (USD layers under a "USD layers" header, then a "Products" header) | Versions, newest first, `(current)` on the USD pointer's version | Files in version, numbered files as one `name.####.ext  first-last (count)` line | path, source workfile, comment, date, user, dcc; current yes/no for USD; file count |
+| Media | Media names | Versions | Files / frame range summary (as Products) | same as Products |
 
 - A department with exactly one task selects it automatically.
 - Selection is remembered per view while the app runs.
@@ -579,13 +595,19 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 
 Other interactions:
 
-- Double-click = open (workfile) or reveal (version).
-- Drag files from Finder/Explorer onto a task → ingest as next workfile. Onto a product/media → ingest as next version.
-- F5 = Reload, plus an automatic refresh when the window regains focus.
+- Double-click = open (workfile, unmanaged file, file in a version) or reveal (version).
+- Drag files from Finder/Explorer onto a task, or into the Files column of the selected task → ingest as next workfiles. Onto a product/media name, or into its Versions/Files columns → ingest as its next version.
+- F5 = Reload, plus an automatic refresh when the window regains focus (at most every 2 s).
+- The entity menu offers asset/category entries in Assets mode and sequence/shot entries in Shots mode. "New asset" takes `name` or `category/name` and pre-fills the selected category; "New shot" pre-fills `<selected sequence>_`.
+- "Open" uses the application configured for the extension in the user settings (§8.4, `dcc`), else the OS default. "Open with ▸" lists every configured application plus the system default.
+- Extension lists (New empty workfile, Copy next version path): `hip`, `nk`, `blend`, the `dcc` extensions from the user settings, the `shared/templates/empty.<ext>` templates and the extensions already in the task. New empty workfile is enabled only where a template exists.
+- "Finalize / Edit comment" asks for the comment (pre-filled) and, for a USD version with several `.usd` files, which one is the main file.
+- After creating something the browser selects it. Errors from core appear in a message box.
+- Open and reveal go through one helper per OS (`core/system.py`): macOS `open` / `open -a <app>` / `open -R`, Windows `os.startfile` / the app's exe / `explorer /select,`, Linux `xdg-open`.
 
 ### 12.3 Styling
 
-All colours, fonts and spacing live in one QSS file (`gui/theme.qss`), with a monospace UI font. The look follows the user's reference mock-up (flat panels, warm palette). No hard-coded colours in widget code.
+All colours, fonts and spacing live in one QSS file (`gui/theme.qss`), with a monospace UI font (Menlo, Consolas, DejaVu Sans Mono, …). The look follows the user's reference mock-up (flat panels, warm palette: orange background, peach panels, dark rust for the active state). No hard-coded colours in widget code; the one colour widgets need, for dimmed rows, comes from the theme as `Column { qproperty-dimColor: … }`.
 
 ---
 
@@ -645,7 +667,7 @@ No integration needed: "Copy next version path" → Save As; "Copy next version 
 
 - Locations: `<project>/shared/hooks/*.py` and `<user settings dir>/hooks/*.py`. Both are loaded, project first.
 - A hook is a module-level function with a known name. v1 names:
-  - `post_create(kind, path, context)`, where kind is one of `asset`, `shot`, `sequence`, `dept`, `task`, `product`
+  - `post_create(kind, path, context)`, where kind is one of `asset`, `shot`, `sequence`, `dept`, `task`, `product`, `media`
   - `post_save(path, context)`, called by integrations after Save next version
   - `post_publish(version_dir, context)`, called after `finalize`
 - The project comes from the `context` argument. Files whose name starts with `_` are skipped. Hook files are loaded fresh on every call, in filename order.
@@ -663,9 +685,10 @@ scheinwerk/
 ├── docs/spec.md            # this file
 ├── src/scheinwerk/
 │   ├── core/  templates.py project.py context.py entities.py versions.py
-│   │          publish.py env.py hooks.py usd_pointer.py fileio.py doctor.py errors.py
+│   │          publish.py env.py hooks.py usd_pointer.py fileio.py doctor.py
+│   │          settings.py system.py errors.py
 │   ├── cli.py
-│   ├── gui/   app.py browser.py columns.py actions.py dialogs.py theme.qss
+│   ├── gui/   app.py browser.py columns.py actions.py dialogs.py theme.qss __main__.py
 │   └── dcc/   base.py houdini.py nuke.py blender.py
 ├── integrations/
 │   ├── houdini/  scheinwerk.json  python3.11libs/  toolbar/  otls/
@@ -680,7 +703,7 @@ scheinwerk/
 - Tests build real throwaway projects in `tmp_path`. The filesystem is never mocked.
 - Required suites: template format ⇄ parse round-trips; optional category parsing; `_seq` parsing; version counting (shared across extensions, gaps, v1000+, empty folders); atomic writes; pointer/root layer text; unmanaged files; ignore patterns.
 - CI: GitHub Actions matrix `macos-latest` + `windows-latest`, Python 3.11.
-- GUI and DCC code are tested manually. Keep them thin enough that this is acceptable.
+- GUI and DCC code are tested manually. Keep them thin enough that this is acceptable. `tests/gui` has offscreen smoke tests (columns fill, menus, a few actions); they are skipped when PySide6 isn't installed, as in CI.
 
 ---
 

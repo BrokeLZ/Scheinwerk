@@ -93,3 +93,11 @@ def validate_extension(ext: str) -> None:
         raise InvalidName(
             f"Invalid extension {ext!r}: use lowercase letters and digits without the dot (hip)."
         )
+
+
+def parse_frames(text: str) -> tuple[int, int]:
+    """`1001-1096` -> (1001, 1096). Whitespace around the parts is allowed."""
+    match = re.fullmatch(r"\s*([0-9]+)\s*-\s*([0-9]+)\s*", text)
+    if not match:
+        raise InvalidName(f"Invalid frame range {text!r}: expected START-END such as 1001-1096.")
+    return int(match[1]), int(match[2])

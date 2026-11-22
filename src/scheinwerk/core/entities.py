@@ -137,11 +137,16 @@ class Entity:
         return [Product(self.project, d) for d in self.project.scan(self.path / "media")]
 
     def create_product(self, name: str) -> Product:
-        validate_name("product", name)
-        path = self.path / "publish" / name
+        return self._create_versioned("product", self.path / "publish" / name)
+
+    def create_media(self, name: str) -> Product:
+        return self._create_versioned("media", self.path / "media" / name)
+
+    def _create_versioned(self, kind: str, path: Path) -> Product:
+        validate_name(kind, path.name)
         check_free(path)
         path.mkdir(parents=True)
-        post_create("product", path)
+        post_create(kind, path)
         return Product(self.project, path)
 
 
