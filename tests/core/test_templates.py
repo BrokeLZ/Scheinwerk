@@ -12,7 +12,9 @@ from scheinwerk.core.templates import (
     format_product_stem,
     format_version,
     format_workfile,
+    parse_fps,
     parse_frames,
+    parse_resolution,
     parse_version,
     parse_workfile,
     shot_sequence,
@@ -281,3 +283,34 @@ def test_step_name(text: str, delta: int, expected: str) -> None:
 @pytest.mark.parametrize("text", ["", "sq", "abc", "  "])
 def test_step_name_without_number(text: str) -> None:
     assert step_name(text, 1) is None
+
+
+# --- project settings typed in the GUI ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "fps"), [("24", 24), ("25.0", 25), ("23.976", 23.976), (" 30 ", 30)]
+)
+def test_parse_fps(text: str, fps: float) -> None:
+    assert parse_fps(text) == fps
+    assert type(parse_fps(text)) is type(fps)  # whole numbers stay ints in scheinwerk.json
+
+
+@pytest.mark.parametrize("text", ["", "0", "-24", "abc", "24fps"])
+def test_parse_fps_rejects(text: str) -> None:
+    with pytest.raises(InvalidName):
+        parse_fps(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "res"),
+    [("1920x1080", (1920, 1080)), ("3840 x 2160", (3840, 2160)), ("2048X1080", (2048, 1080))],
+)
+def test_parse_resolution(text: str, res: tuple[int, int]) -> None:
+    assert parse_resolution(text) == res
+
+
+@pytest.mark.parametrize("text", ["", "1920", "1920x", "0x1080", "1920*1080*3", "hd"])
+def test_parse_resolution_rejects(text: str) -> None:
+    with pytest.raises(InvalidName):
+        parse_resolution(text)

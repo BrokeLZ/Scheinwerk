@@ -323,9 +323,10 @@ uv run scheinwerk-gui          # the same, without the CLI
 
 ### Finding your way
 
-- **Top bar.** *Scenefiles / Products / Media* switch the view. The dropdown holds your recent projects. `?` shows a cheat sheet, `+` makes a new project or adds an existing one, *Reload* (or F5) re-reads the disk. The browser also reloads by itself when its window gets focus.
+- **Top bar.** *Scenefiles / Products / Media* switch the view. The project dropdown lists your recent projects; at the bottom are *Open existing project…* (choose the project folder or any folder inside it) and *New project…*. *Reload* (or F5) re-reads the disk; the browser also reloads by itself when its window gets focus.
+- **New project…** asks where the project folder goes (*Location*, with *Browse…*), its *Name*, *Frame rate*, *Resolution* and *Start frame*. The dialog shows the folder it will create, `<location>/<name>`. Frame rate and resolution have the common values in their dropdowns, or type your own (`23.976`, `2048x858`). Department templates, the USD layer order and ignore patterns stay in the project's `scheinwerk.json`; edit that file if you want different ones.
 - **Left column.** *Assets* (grouped by category) or *Shots* (grouped by sequence; `sq010 (sequence)` is the sequence-level work area `_seq`).
-- **Scenefiles view.** Departments, tasks, then the task's workfiles, newest first. Files that don't follow the naming are shown *in italics* (unmanaged). A department with one task selects it for you.
+- **Scenefiles view.** Departments, tasks, then the task's workfiles, newest first. Files that don't follow the naming are shown *in italics* (unmanaged). Something is always selected: picking an asset or shot selects its first department, first task and newest workfile (or what you had picked there before).
 - **Products / Media views.** Products (USD layers first), their versions (`(current)` marks the version the USD pointer uses, empty versions are in italics) and the files in a version. Image sequences show as one line: `name.####.exr  1001-1096 (96)`.
 - **Detail panel** (under Departments/Tasks): path, latest version and frame range, or for a version: source, comment, date, user.
 - **Filter.** Click into any column and just type; a filter field appears. Esc clears it.
@@ -340,7 +341,7 @@ There are no buttons for actions: everything is in the right-click menu of the c
 | Right-click on | You get |
 | --- | --- |
 | Assets / shots | New asset…, New category…, or New sequence…, New shot…; Set frame range…; Copy path / relative path; Reveal |
-| Departments | New department ▸ (from the template, or Custom…); Copy path; Reveal |
+| Departments | New department… (pick one of the template's or type your own; *Create task "main"* is on by default, untick it for a department without tasks); Copy path; Reveal |
 | Tasks | New task…; Copy path; Reveal |
 | A workfile | Open, Open with ▸, New version from this, Copy path / relative path, Reveal |
 | Anywhere in Files | New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path**, Ingest file(s)… |

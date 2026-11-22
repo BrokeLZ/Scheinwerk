@@ -8,9 +8,12 @@ import pytest
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QLabel,
+    QLineEdit,
     QPushButton,
     QWidget,
 )
@@ -27,7 +30,7 @@ def parent(qapp) -> QWidget:
 
 
 def answer(
-    fill: dict[int, str] | None = None,
+    fill: dict[int, str | bool] | None = None,
     *,
     accept: bool = True,
     clicks: list[tuple[int, str]] = (),
@@ -58,7 +61,9 @@ def answer(
             fields = [dialogs._field(w) or w for w in rows]
             for index, text in (fill or {}).items():
                 field = fields[index]
-                if isinstance(field, QComboBox):
+                if isinstance(field, QCheckBox):
+                    field.setChecked(bool(text))
+                elif isinstance(field, QComboBox):
                     field.setCurrentText(text)
                 else:
                     field.setText(text)
@@ -99,11 +104,48 @@ def test_ask_finalize(parent: QWidget) -> None:
     assert dialogs.ask_finalize(parent, "c", ["a.usd", "b.usd"], "a.usd") == ("c", "b.usd")
 
 
-def test_ask_new_project(parent: QWidget, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    folder = tmp_path / "MyShow"
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(folder))
-    answer()
-    assert dialogs.ask_new_project(parent) == (folder, "myshow")
+DEFAULTS = {"fps": 24, "resolution": [1920, 1080], "frame_start": 1001}
+
+
+def test_ask_new_project_defaults(parent: QWidget, tmp_path: Path) -> None:
+    answer({1: "myshow"})
+    assert dialogs.ask_new_project(parent, tmp_path, DEFAULTS) == (
+        str(tmp_path),
+        "myshow",
+        "24",
+        "1920x1080",
+        1001,
+    )
+
+
+def test_ask_new_project_settings(parent: QWidget, tmp_path: Path) -> None:
+    answer({0: str(tmp_path / "jobs"), 1: "short", 2: "25", 3: "2048x858"})
+    assert dialogs.ask_new_project(parent, None, DEFAULTS) == (
+        str(tmp_path / "jobs"),
+        "short",
+        "25",
+        "2048x858",
+        1001,
+    )
+
+
+def test_ask_new_project_browse(
+    parent: QWidget, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+
+    def go() -> None:
+        dialog = QApplication.activeModalWidget()
+        if dialog is None:
+            QTimer.singleShot(10, go)
+            return
+        next(b for b in dialog.findChildren(QPushButton) if b.text() == "Browse…").click()
+        dialog.findChildren(QLineEdit)[1].setText("show")
+        assert dialog.findChild(QLabel, "preview").text() == f"Creates {tmp_path / 'show'}"
+        dialog.accept()
+
+    QTimer.singleShot(0, go)
+    assert dialogs.ask_new_project(parent, None, DEFAULTS)[:2] == (str(tmp_path), "show")
 
 
 def test_ask_asset(parent: QWidget) -> None:
@@ -161,3 +203,12 @@ def test_ask_shot_steps(parent: QWidget) -> None:
     answer(clicks=[(0, "+")])  # no preset: the suggestion
     answer_shot = dialogs.ask_shot(parent, [], None, lambda: "sq030", lambda s: f"{s}_0010")
     assert answer_shot == ("sq030_", None)  # shot number left empty: core will reject it
+
+
+def test_ask_department(parent: QWidget) -> None:
+    answer()  # first template choice, task on by default
+    assert dialogs.ask_department(parent, ["tex", "lookdev"]) == ("tex", True)
+    answer({0: "groom", 1: False})  # custom name, no task
+    assert dialogs.ask_department(parent, ["tex"]) == ("groom", False)
+    answer({0: "lookdev"})
+    assert dialogs.ask_department(parent, ["tex", "lookdev"]) == ("lookdev", True)

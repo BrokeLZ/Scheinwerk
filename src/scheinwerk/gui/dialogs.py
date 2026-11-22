@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -16,25 +17,26 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QWidget,
 )
 
 from scheinwerk.core.errors import ScheinwerkError
-from scheinwerk.core.settings import settings_path
 from scheinwerk.core.templates import parse_frames, step_name
 
 
 def _field(widget: QWidget) -> QWidget:
     """The input inside a row: the widget itself, or the `field` inside a row with a + button."""
-    if isinstance(widget, (QLineEdit, QComboBox)):
+    if isinstance(widget, (QLineEdit, QComboBox, QCheckBox, QSpinBox)):
         return widget
     return widget.findChild(QComboBox, "field") or widget.findChild(QLineEdit, "field")
 
 
 def _form(
     parent: QWidget, title: str, rows: list[tuple[str, QWidget]], focus: int = 0
-) -> list[str] | None:
-    """Show the fields; return their values on OK, None on Cancel.
+) -> list[str | bool] | None:
+    """Show the fields; return their values on OK (text, or True/False for a checkbox),
+    None on Cancel.
 
     The values are read here, while the dialog exists: once this returns, Qt may
     delete the dialog and its fields, so callers must never touch the widgets.
@@ -55,7 +57,15 @@ def _form(
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     fields = [_field(w) for _, w in rows]
-    return [f.currentText() if isinstance(f, QComboBox) else f.text() for f in fields]
+    return [_value(f) for f in fields if f is not None]  # rows without an input don't count
+
+
+def _value(field: QWidget) -> str | bool | int:
+    if isinstance(field, QCheckBox):
+        return field.isChecked()
+    if isinstance(field, QSpinBox):
+        return field.value()
+    return field.currentText() if isinstance(field, QComboBox) else field.text()
 
 
 def _line(text: str = "", placeholder: str = "") -> QLineEdit:
@@ -135,6 +145,21 @@ def ask_asset(
     return values[0].strip() or None, values[1].strip()
 
 
+def ask_department(parent: QWidget, choices: list[str]) -> tuple[str, bool] | None:
+    """(name, create the task "main"?). `choices`: template departments not created yet;
+    a custom name can be typed instead."""
+    create_main = QCheckBox('Create task "main"')
+    create_main.setChecked(True)
+    rows = [
+        ("Department", _combo(choices, choices[0] if choices else "", "groom")),
+        ("", create_main),
+    ]
+    values = _form(parent, "New department", rows)
+    if values is None:
+        return None
+    return values[0].strip(), values[1]
+
+
 def ask_sequence(parent: QWidget, next_name: Callable[[], str]) -> str | None:
     edit = _line("", next_name())
     values = _form(parent, "New sequence", [("Name", _with_steps(edit, next_name, "name"))])
@@ -193,12 +218,60 @@ def ask_finalize(
     return values[0], values[1] if len(values) > 1 else None
 
 
-def ask_new_project(parent: QWidget) -> tuple[Path, str] | None:
-    folder = QFileDialog.getExistingDirectory(parent, "Folder for the new project")
-    if not folder:
+FPS_CHOICES = ["23.976", "24", "25", "29.97", "30", "48", "50", "60"]
+RESOLUTION_CHOICES = ["1920x1080", "2048x1080", "2048x858", "1280x720", "3840x2160", "4096x2160"]
+
+
+def ask_new_project(
+    parent: QWidget, location: Path | None, defaults: dict
+) -> tuple[str, str, str, str, int] | None:
+    """(location, name, fps, resolution, frame start) as typed; the project folder is
+    <location>/<name>. `defaults` holds fps, resolution and frame_start (spec §8.1)."""
+    folder = _line(str(location or ""), "where the project folder goes")
+    folder.setObjectName("field")
+    browse = QPushButton("Browse…")
+    browse.setAutoDefault(False)
+    location_row = QWidget()
+    layout = QHBoxLayout(location_row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(folder, 1)
+    layout.addWidget(browse)
+
+    def pick() -> None:
+        chosen = QFileDialog.getExistingDirectory(
+            location_row, "Where the project goes", folder.text()
+        )
+        if chosen:
+            folder.setText(chosen)
+
+    browse.clicked.connect(pick)
+    name = _line("", "myshow")
+    width, height = defaults["resolution"]
+    start = QSpinBox()
+    start.setRange(0, 10_000_000)
+    start.setValue(defaults["frame_start"])
+    preview = QLabel()
+    preview.setObjectName("preview")
+
+    def update_preview() -> None:
+        where = Path(folder.text()) / name.text() if folder.text() and name.text() else None
+        preview.setText(f"Creates {where}" if where else "")
+
+    folder.textChanged.connect(update_preview)
+    name.textChanged.connect(update_preview)
+    rows = [
+        ("Location", location_row),
+        ("Name", name),
+        ("Frame rate", _combo(FPS_CHOICES, str(defaults["fps"]), "24")),
+        ("Resolution", _combo(RESOLUTION_CHOICES, f"{width}x{height}", "1920x1080")),
+        ("Start frame", start),
+        ("", preview),
+    ]
+    values = _form(parent, "New project", rows, focus=1)
+    if values is None:
         return None
-    name = ask_text(parent, "New project", "Name", Path(folder).name.lower(), "myshow")
-    return (Path(folder), name) if name else None
+    where, project, fps, resolution, frame_start = values
+    return where.strip(), project.strip(), fps, resolution, frame_start
 
 
 def pick_folder(parent: QWidget, title: str) -> Path | None:
@@ -213,29 +286,3 @@ def pick_files(parent: QWidget, title: str = "Ingest files") -> list[Path]:
 
 def error(parent: QWidget, exc: Exception) -> None:
     QMessageBox.warning(parent, "Scheinwerk", str(exc))
-
-
-HELP = """\
-Right-click anything for its actions. There are no other buttons.
-
-Double-click    open a workfile / reveal a version folder
-Type            filter the focused column (Esc clears)
-Drag files      onto a task: ingest as next workfile versions
-                onto a product or media: ingest as the next version
-F5              reload (also happens when the window gets focus)
-
-Open uses the application set per extension in
-{settings}
-("dcc" section), otherwise the system default.
-
-Full guide: docs/usage.md in the Scheinwerk repository."""
-
-
-def show_help(parent: QWidget) -> None:
-    box = QMessageBox(parent)
-    box.setWindowTitle("Scheinwerk help")
-    box.setText(HELP.format(settings=settings_path()))
-    label = box.findChild(QLabel, "qt_msgbox_label")
-    if label is not None:
-        label.setObjectName("helpText")
-    box.exec()

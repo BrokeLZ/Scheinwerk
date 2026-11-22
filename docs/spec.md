@@ -407,6 +407,8 @@ Stdlib only. Paths are `pathlib.Path` at runtime and root-relative POSIX `str` w
 validate_name(kind, name, *, seq=None) -> None   # kind: project category asset sequence shot dept task product media layer
 validate_extension(ext) -> None                  # "hip": lowercase [a-z0-9]+, no dot
 parse_frames(text) -> tuple[int, int]            # "1001-1096"
+parse_fps(text) -> int | float                   # "24" -> 24, "23.976"
+parse_resolution(text) -> tuple[int, int]        # "1920x1080"
 step_name(text, delta, step=10) -> str | None   # "sq020", +1 -> "sq030"; None without a number
 shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
 format_version(n) -> str / parse_version(text) -> int | None
@@ -565,7 +567,7 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
-│          [Scenefiles] [Products] [Media]      [ project ▾ ] [?] [+] [Reload] │ ← top bar, fixed
+│          [Scenefiles] [Products] [Media]            [ project ▾ ] [Reload] │ ← top bar, fixed
 ├─────────────────┬──────────────┬──────────────┬───────────────────────────┤
 │ [Assets][Shots] │ Column 2     │ Column 3     │ Column 4                  │
 │ entity tree     │              │              │                           │
@@ -574,7 +576,8 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 └─────────────────┴─────────────────────────────┴───────────────────────────┘
 ```
 
-- **Top bar** is identical in every view: view switch, project dropdown (recent projects), `?` (shortcuts/help), `+` (new project / add existing project), Reload.
+- **Top bar** is identical in every view: view switch, project dropdown, Reload. The dropdown lists the recent projects that still exist, then *Open existing project…* (pick any folder inside a project) and *New project…*. Choosing an action and cancelling leaves the open project selected.
+- **New project…** asks for *Location* (a folder, with *Browse…*; pre-filled with the folder holding the open project), *Name*, *Frame rate* and *Resolution* (dropdowns of common values that can be typed into, parsed by `parse_fps` / `parse_resolution`), and *Start frame*; defaults come from §8.1. The project folder is `<location>/<name>`, shown in the dialog before it is created. Departments, USD layer order and ignore patterns are edited in `scheinwerk.json`.
 - **Entity column** is the same in every view: Assets/Shots toggle above a tree. Assets are grouped by category if present. Shots are grouped by sequence, and each sequence's `_seq` level is its first child, labelled `<seq> (sequence)`.
 - All columns have type-to-filter: typing in a focused column shows a filter field under it, Backspace edits it, Esc clears and hides it. Columns are separated by splitters, the detail panel sits under columns 2–3 and column 4 runs full height (as in the mock-up).
 - Asset tree: uncategorised assets first, then one group per category (empty categories too).
@@ -587,7 +590,7 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 | Products | Products (USD layers under a "USD layers" header, then a "Products" header) | Versions, newest first, `(current)` on the USD pointer's version | Files in version, numbered files as one `name.####.ext  first-last (count)` line | path, source workfile, comment, date, user, dcc; current yes/no for USD; file count |
 | Media | Media names | Versions | Files / frame range summary (as Products) | same as Products |
 
-- A department with exactly one task selects it automatically.
+- A column is never left without a selection when it has rows: it selects the remembered row if it is there, else the first one (the entity tree: the first asset or shot, skipping category and sequence header rows; Products: skipping the USD layers/Products headers). So selecting an entity selects its first department, first task and newest workfile. Deselecting (Ctrl-click, clicking empty space) puts the selection back.
 - Selection is remembered per view while the app runs.
 
 ### 12.2 Actions — right-click only (no bottom buttons)
@@ -595,7 +598,7 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 | Where | Menu |
 | --- | --- |
 | Entity column | New asset · New category · New sequence · New shot · Set frame range · Copy path · Copy relative path · Reveal |
-| Departments | New department ▸ (template entries + Custom…) · Copy path · Reveal |
+| Departments | New department… (dialog: the template departments not created yet, or a typed name; *Create task "main"*, on by default) · Copy path · Reveal |
 | Tasks | New task · Copy path · Reveal |
 | Workfiles (file) | Open · Open with ▸ · New version from this · Copy path · Copy relative path · Reveal |
 | Workfiles (empty space or file) | New empty workfile ▸ (ext) · **Copy next version path** · Ingest file(s)… |

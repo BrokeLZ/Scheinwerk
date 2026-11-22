@@ -97,7 +97,7 @@ QMenu::item:selected { background: #a8380a; color: #fbe3d3; }
 QMenu::item:disabled { color: #9a6d55; }
 QMenu::separator { height: 1px; background: #e8650a; margin: 4px 8px; }
 
-QDialog QLineEdit, QDialog QComboBox {
+QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox {
     background: #fbe3d3;
     color: #3b2314;
     border: 1px solid #e8650a;

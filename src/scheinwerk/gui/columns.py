@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -76,12 +77,21 @@ class Column(QWidget):
     menuRequested = Signal(object, QPoint)  # item data (None = empty space), global pos
     filesDropped = Signal(object, list)  # item data (None = empty space), [Path]
 
-    def __init__(self, title: str | None = None, *, accepts_drops: bool = False) -> None:
+    def __init__(
+        self,
+        title: str | None = None,
+        *,
+        accepts_drops: bool = False,
+        selectable: Callable[[object], bool] = lambda data: data is not None,
+    ) -> None:
+        """`selectable` says which rows may be picked automatically (not group headers)."""
         super().__init__()
         self.setObjectName("column")
         self.accepts_drops = accepts_drops
+        self.selectable = selectable
         self._dim = QColor()
         self._restoring = False
+        self._last_key: str | None = None
 
         self.title = QLabel(title or "")
         self.title.setObjectName("columnTitle")
@@ -125,7 +135,8 @@ class Column(QWidget):
         self.title.setText(title)
 
     def set_rows(self, rows: list[Row], select: str | None = None) -> None:
-        """Replace the content and select `select` (a key) if it is there, without signalling."""
+        """Replace the content and select `select` (a key) if it is there, else the first
+        selectable row, without signalling. A column is never left without a selection."""
         self._restoring = True
         self.tree.clear()
         self.tree.setRootIsDecorated(any(r.children for r in rows))
@@ -136,9 +147,17 @@ class Column(QWidget):
                 item.addChild(self._item(child))
             item.setExpanded(True)
         self._apply_filter(self.filter.text())
-        if select:
-            self.select_key(select)
+        if not self.select_key(select):
+            self.select_first()
+        self._last_key = self.current_key()
         self._restoring = False
+
+    def select_first(self) -> bool:
+        for item in self._items():
+            if not item.isHidden() and self.selectable(item.data(0, DATA)):
+                self.tree.setCurrentItem(item)
+                return True
+        return False
 
     def _item(self, row: Row) -> QTreeWidgetItem:
         item = QTreeWidgetItem([row.label])
@@ -187,14 +206,20 @@ class Column(QWidget):
     # --- signals ----------------------------------------------------------------
 
     def _selection_changed(self) -> None:
-        if not self._restoring:
-            self.selectionChanged.emit()
+        if self._restoring:
+            return
+        # Something deselected the row (Ctrl-click, empty space): put it back. Selecting
+        # again calls this method again, which then signals.
+        if not self.tree.selectedItems() and (
+            self.select_key(self._last_key) or self.select_first()
+        ):
+            return
+        self._last_key = self.current_key()
+        self.selectionChanged.emit()
 
     def _menu(self, pos: QPoint) -> None:
         item = self.tree.itemAt(pos)
-        if item is None:
-            self.tree.clearSelection()
-        else:
+        if item is not None:
             self.tree.setCurrentItem(item)  # the menu acts on what was right-clicked
         self.menuRequested.emit(
             item.data(0, DATA) if item else None, self.tree.viewport().mapToGlobal(pos)

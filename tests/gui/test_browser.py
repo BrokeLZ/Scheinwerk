@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QPushButton
 
 from scheinwerk.core.entities import Workfile
 from scheinwerk.core.project import Project
@@ -120,7 +121,7 @@ def test_menus(browser: Browser) -> None:
         "Copy relative path",
         "Reveal",
     ]
-    assert "New department" in menu_labels(actions.column_menu(browser, 0, browser.department()))
+    assert "New department…" in menu_labels(actions.column_menu(browser, 0, browser.department()))
     workfile = browser.cols[2].all_data()[0]
     assert isinstance(workfile, Workfile)
     file_menu = menu_labels(actions.column_menu(browser, 2, workfile))
@@ -161,7 +162,8 @@ def test_actions_call_core(
     assert (show.root / "assets/prop/lamp/entity.json").is_file()
     assert browser.entity().name == "lamp"  # the new asset is selected
 
-    trigger(actions.column_menu(browser, 0, None), "New department", "tex")
+    monkeypatch.setattr(dialogs, "ask_department", lambda parent, choices: ("tex", True))
+    trigger(actions.column_menu(browser, 0, None), "New department…")
     assert (show.root / "assets/prop/lamp/tex/main/work").is_dir()
     assert browser.department().name == "tex"
     assert browser.task().name == "main"
@@ -286,3 +288,126 @@ def test_right_click_selects_the_item(browser: Browser, show: Project) -> None:
     column.menuRequested.disconnect()  # don't open a real menu
     column._menu(column.tree.visualItemRect(item).center())
     assert browser.entity().name == "sq010_0010"
+
+
+# --- always a selection ------------------------------------------------------------
+
+
+def test_selecting_an_entity_selects_the_first_of_everything(
+    browser: Browser, show: Project
+) -> None:
+    browser.memory["scenefiles"] = [None, None, None]
+    browser.entities.select_key("asset:chair")  # no departments: columns stay empty
+    assert (browser.department(), browser.task(), browser.workfile()) == (None, None, None)
+    browser.entities.select_key("asset:hero")
+    assert browser.department().name == "mdl"
+    assert browser.task().name == "main"
+    assert browser.workfile().path.name == "hero_mdl_main_v002.nk"  # newest first
+
+
+def test_products_select_first_skipping_headers(browser: Browser) -> None:
+    browser.set_view("products")
+    assert browser.product().name == "asset"  # not the "USD layers" header
+    assert browser.version().number == 2  # newest
+    assert browser.cols[2].current_data() is not None
+
+
+def test_first_entity_is_selected_on_start(qapp, show: Project) -> None:
+    b = Browser(show.root)
+    assert b.entity().name == "chair"  # first asset; category rows are skipped
+    b.set_mode("shots")
+    assert b.entity().name == "sq010"  # the sequence entry, not the sq010 header
+
+
+def test_deselecting_puts_the_selection_back(browser: Browser) -> None:
+    browser.cols[0].select_key("rig")
+    browser.cols[0].tree.clearSelection()  # what Ctrl-click / empty-space clicks do
+    assert browser.department().name == "rig"
+
+
+def test_new_department_without_task(
+    browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = {}
+
+    def ask_department(parent, choices):
+        seen["choices"] = choices
+        return "groom", False
+
+    monkeypatch.setattr(dialogs, "ask_department", ask_department)
+    trigger(actions.column_menu(browser, 0, None), "New department…")
+    assert seen["choices"] == ["tex", "lookdev", "fx"]  # template minus mdl and rig
+    groom = show.root / "assets/char/hero/groom"
+    assert groom.is_dir() and list(groom.iterdir()) == []
+    assert browser.department().name == "groom"
+    assert browser.task() is None
+
+
+# --- project dropdown --------------------------------------------------------------
+
+
+def box_items(browser: Browser) -> list[str]:
+    box = browser.project_box
+    return [box.itemText(i) or "---" for i in range(box.count())]
+
+
+def test_top_bar_has_no_help_or_plus(browser: Browser) -> None:
+    texts = {b.text() for b in browser.findChildren(QPushButton)}
+    assert "?" not in texts and "+" not in texts
+    assert box_items(browser) == ["testproject", "---", "Open existing project…", "New project…"]
+    assert browser.project_box.currentText() == "testproject"
+
+
+def choose(browser: Browser, text: str) -> None:
+    index = browser.project_box.findText(text)
+    browser.project_box.setCurrentIndex(index)
+    browser.project_box.activated.emit(index)
+
+
+def test_new_project_from_dropdown(
+    browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen = {}
+
+    def ask(parent, location, defaults):
+        seen.update(location=location, fps=defaults["fps"])
+        return str(tmp_path / "jobs"), "short", "25", "2048x858", 1
+
+    monkeypatch.setattr(dialogs, "ask_new_project", ask)
+    choose(browser, "New project…")
+    assert seen == {"location": show.root.parent, "fps": 24}
+    config = Project.find(tmp_path / "jobs/short").config
+    assert (config["fps"], config["resolution"], config["frame_start"]) == (25, [2048, 858], 1)
+    assert browser.project.root == tmp_path / "jobs/short"
+    assert box_items(browser)[:2] == ["short", "testproject"]
+
+
+def test_new_project_bad_input_keeps_the_open_project(
+    browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    shown = []
+    monkeypatch.setattr(dialogs, "error", lambda parent, exc: shown.append(str(exc)))
+    monkeypatch.setattr(
+        dialogs, "ask_new_project", lambda *a: (str(tmp_path), "short", "fast", "1920x1080", 1)
+    )
+    choose(browser, "New project…")
+    assert "frame rate" in shown[0]
+    assert not (tmp_path / "short").exists()
+    assert browser.project.root == show.root
+    assert browser.project_box.currentText() == "testproject"
+
+
+def test_cancel_restores_the_dropdown(browser: Browser, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dialogs, "pick_folder", lambda *a: None)
+    choose(browser, "Open existing project…")
+    assert browser.project_box.currentText() == "testproject"
+
+
+def test_open_existing_from_dropdown(
+    browser: Browser, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    other = Project.create(tmp_path / "other", "other")
+    (other.root / "assets").mkdir(exist_ok=True)
+    monkeypatch.setattr(dialogs, "pick_folder", lambda *a: other.root / "assets")
+    choose(browser, "Open existing project…")
+    assert browser.project.root == other.root

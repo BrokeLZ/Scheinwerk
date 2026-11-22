@@ -10,10 +10,12 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMenu
 
 from scheinwerk.core.entities import Department, Entity, Task, Workfile
-from scheinwerk.core.project import Project
+from scheinwerk.core.errors import ScheinwerkError
+from scheinwerk.core.project import DEFAULTS, Project
 from scheinwerk.core.publish import USD_SUFFIXES, finalize, ingest, set_current
 from scheinwerk.core.settings import app_for
 from scheinwerk.core.system import open_path, reveal
+from scheinwerk.core.templates import parse_fps, parse_resolution
 from scheinwerk.core.versions import FileGroup, Product, Version
 from scheinwerk.gui import dialogs
 
@@ -53,29 +55,38 @@ def _path_actions(b: Browser, menu: QMenu, path: Path | None, relative: bool = T
 # --- top bar ------------------------------------------------------------------
 
 
-def project_menu(b: Browser) -> QMenu:
-    menu = QMenu(b)
+def new_project(b: Browser) -> None:
+    location = b.project.root.parent if b.project else None
+    answer = dialogs.ask_new_project(b, location, DEFAULTS)
+    if not answer:
+        return
+    where, name, fps, resolution, frame_start = answer
 
-    def new_project() -> None:
-        answer = dialogs.ask_new_project(b)
-        if answer:
-            project = b.run(Project.create, *answer)
-            if project:
-                b.set_project(project.root)
+    def create() -> Project:
+        if not where:
+            raise ScheinwerkError("Choose a location for the project folder.")
+        return Project.create(
+            Path(where) / name,
+            name,
+            fps=parse_fps(fps),
+            resolution=list(parse_resolution(resolution)),
+            frame_start=frame_start,
+        )
 
-    def add_existing() -> None:
-        folder = dialogs.pick_folder(b, "Choose a project folder (or any folder inside one)")
-        if folder is None:
-            return
-        project = Project.find(folder)
-        if project is None:
-            dialogs.error(b, FileNotFoundError(f"No scheinwerk.json in {folder} or above."))
-        else:
-            b.set_project(project.root)
+    project = b.run(create)
+    if project:
+        b.set_project(project.root)
 
-    _add(menu, "New project…", new_project)
-    _add(menu, "Add existing project…", add_existing)
-    return menu
+
+def open_project(b: Browser) -> None:
+    folder = dialogs.pick_folder(b, "Choose a project folder (or any folder inside one)")
+    if folder is None:
+        return
+    project = Project.find(folder)
+    if project is None:
+        dialogs.error(b, ScheinwerkError(f"No scheinwerk.json in {folder} or above."))
+    else:
+        b.set_project(project.root)
 
 
 # --- entity column --------------------------------------------------------------
@@ -157,23 +168,17 @@ def column_menu(b: Browser, i: int, data: object) -> QMenu:
 
 def _department_menu(b: Browser, menu: QMenu, data: object) -> None:
     entity = b.entity()
-    template = b.project.department_template(entity.type)
-    existing = {d.name for d in entity.departments()}
 
-    def create(name: str) -> None:
-        b.remember(0, name)
-        b.run(entity.create_department, name, tuple(template.get(name) or ["main"]))
+    def new_department() -> None:
+        existing = {d.name for d in entity.departments()}
+        template = b.project.department_template(entity.type)
+        answer = dialogs.ask_department(b, [n for n in template if n not in existing])
+        if answer and answer[0]:
+            name, create_main = answer
+            b.remember(0, name)
+            b.run(entity.create_department, name, ("main",) if create_main else ())
 
-    def custom() -> None:
-        name = dialogs.ask_text(b, "New department", "Name", hint="groom")
-        if name:
-            create(name)
-
-    sub = menu.addMenu("New department")
-    for name in template:
-        _add(sub, name, (lambda n=name: create(n)) if name not in existing else None)
-    sub.addSeparator()
-    _add(sub, "Custom…", custom)
+    _add(menu, "New department…", new_department)
     _path_actions(b, menu, data.path if isinstance(data, Department) else None, relative=False)
 
 

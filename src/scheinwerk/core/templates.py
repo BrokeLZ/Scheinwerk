@@ -122,3 +122,22 @@ def step_name(text: str, delta: int, step: int = 10) -> str | None:
     number = int(digits)
     stepped = (number // step + 1) * step if delta > 0 else ((number - 1) // step) * step
     return f"{prefix}{max(stepped, step):0{len(digits)}d}"
+
+
+def parse_fps(text: str) -> int | float:
+    """`24` -> 24, `23.976` -> 23.976. Whole numbers come back as int."""
+    try:
+        fps = float(text.strip())
+    except ValueError:
+        fps = 0.0
+    if not fps > 0:
+        raise InvalidName(f"Invalid frame rate {text!r}: expected a number such as 24 or 23.976.")
+    return int(fps) if fps.is_integer() else fps
+
+
+def parse_resolution(text: str) -> tuple[int, int]:
+    """`1920x1080` -> (1920, 1080)."""
+    match = re.fullmatch(r"\s*([0-9]+)\s*[xX]\s*([0-9]+)\s*", text)
+    if not match or not int(match[1]) or not int(match[2]):
+        raise InvalidName(f"Invalid resolution {text!r}: expected WIDTHxHEIGHT such as 1920x1080.")
+    return int(match[1]), int(match[2])

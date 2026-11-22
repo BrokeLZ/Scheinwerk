@@ -38,6 +38,7 @@ TITLES = {
     "media": ("Media:", "Versions:", "Files:", "Version detail"),
 }
 REFOCUS_RELOAD_SECONDS = 2.0
+OPEN_PROJECT, NEW_PROJECT = "<open>", "<new>"  # project dropdown entries that are actions
 
 
 def load_theme() -> str:
@@ -90,17 +91,13 @@ class Browser(QWidget):
         self.project_box = QComboBox()
         self.project_box.setObjectName("projectBox")
         self.project_box.setMinimumWidth(200)
-        self.help_button = QPushButton("?")
-        self.add_button = QPushButton("+")
+        self.project_box.setPlaceholderText("No project")
         self.reload_button = QPushButton("Reload")
-        for button in (self.help_button, self.add_button, self.reload_button):
-            button.setObjectName("topButton")
+        self.reload_button.setObjectName("topButton")
         bar.addStretch(1)
         bar.addWidget(switch)
         bar.addStretch(2)
         bar.addWidget(self.project_box)
-        bar.addWidget(self.help_button)
-        bar.addWidget(self.add_button)
         bar.addWidget(self.reload_button)
 
         line = QFrame()
@@ -124,7 +121,7 @@ class Browser(QWidget):
             toggle.addWidget(button)
         toggle.addStretch()
         entity_layout.addLayout(toggle)
-        self.entities = Column()
+        self.entities = Column(selectable=lambda data: isinstance(data, Entity))
         entity_layout.addWidget(self.entities)
 
         self.cols = [Column("", accepts_drops=True) for _ in range(3)]
@@ -151,15 +148,7 @@ class Browser(QWidget):
     def _connect(self) -> None:
         self.view_buttons.buttonClicked.connect(lambda b: self.set_view(b.property("view")))
         self.mode_buttons.buttonClicked.connect(lambda b: self.set_mode(b.property("mode")))
-        self.project_box.activated.connect(
-            lambda i: self.set_project(Path(self.project_box.itemData(i)))
-        )
-        self.help_button.clicked.connect(lambda: dialogs.show_help(self))
-        self.add_button.clicked.connect(
-            lambda: actions.project_menu(self).exec(
-                self.add_button.mapToGlobal(self.add_button.rect().bottomLeft())
-            )
-        )
+        self.project_box.activated.connect(self._project_chosen)
         self.reload_button.clicked.connect(self.reload)
         shortcut = QShortcut(QKeySequence(Qt.Key.Key_F5), self)
         shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -232,16 +221,33 @@ class Browser(QWidget):
         if self.project is not None:
             add_recent_project(self.project.root)
         self.settings = load_settings()
-        self.project_box.clear()
+        self._fill_project_box()
+        self.reload()
+
+    def _fill_project_box(self) -> None:
+        """Recent projects, then the two project actions (spec §12.1)."""
+        box = self.project_box
+        box.clear()
         for recent in self.settings["recent_projects"]:
             if (Path(recent) / "scheinwerk.json").is_file():
-                self.project_box.addItem(Path(recent).name, recent)
-                self.project_box.setItemData(
-                    self.project_box.count() - 1, recent, Qt.ItemDataRole.ToolTipRole
-                )
-        if self.project is not None:
-            self.project_box.setCurrentIndex(self.project_box.findData(str(self.project.root)))
-        self.reload()
+                box.addItem(Path(recent).name, recent)
+                box.setItemData(box.count() - 1, recent, Qt.ItemDataRole.ToolTipRole)
+        if box.count():
+            box.insertSeparator(box.count())
+        box.addItem("Open existing project…", OPEN_PROJECT)
+        box.addItem("New project…", NEW_PROJECT)
+        box.setCurrentIndex(box.findData(str(self.project.root)) if self.project else -1)
+
+    def _project_chosen(self, index: int) -> None:
+        data = self.project_box.itemData(index)
+        if data == OPEN_PROJECT:
+            actions.open_project(self)
+        elif data == NEW_PROJECT:
+            actions.new_project(self)
+        else:
+            self.set_project(Path(data))
+            return
+        self._fill_project_box()  # cancelled: show the open project again
 
     def set_view(self, view: str) -> None:
         self.view = view
@@ -297,6 +303,7 @@ class Browser(QWidget):
 
     def _fill_entities(self) -> None:
         self.entities.set_rows(self._entity_rows(), select=self.entity_key)
+        self.entity_key = self.entities.current_key()
         self._fill_from(0)
 
     def _entity_changed(self) -> None:
@@ -311,10 +318,8 @@ class Browser(QWidget):
         """Refill columns `index`.. from the selections to their left, restoring memory."""
         for i in range(index, 3):
             rows = self._rows(i)
-            select = self.memory[self.view][i]
-            if i == 1 and self.view == "scenefiles" and len(rows) == 1:
-                select = rows[0].key  # a department with one task selects it (spec §12.1)
-            self.cols[i].set_rows(rows, select=select)
+            # The remembered row if it's there, else the first (spec §12.1).
+            self.cols[i].set_rows(rows, select=self.memory[self.view][i])
         self._update_detail()
 
     def _rows(self, i: int) -> list[Row]:
