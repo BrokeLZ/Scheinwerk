@@ -9,7 +9,7 @@ A lightweight, file-based VFX pipeline for one artist on macOS and Windows.
 
 Any DCC works without a plugin: Scheinwerk hands out the next path and you save or export through the DCC's own dialog.
 
-> **Status:** Phase 1 (Core) is done: the core works from Python, see [the Python API guide](docs/usage.md#python-api). Phase 2 (the `sw` CLI) is next; `sw` has no subcommands yet. Roadmap: [docs/spec.md §16](docs/spec.md#16-roadmap).
+> **Status:** Phases 1 (core) and 2 (`sw` CLI) are done: a project can be set up and used entirely through `sw`, see [the CLI guide](docs/usage.md#cli-sw). Phase 3 (the GUI) is next. Roadmap: [docs/spec.md §16](docs/spec.md#16-roadmap).
 
 ## Documentation
 
@@ -31,4 +31,13 @@ uv run pytest
 uv run sw --help
 ```
 
-More detail, including the GUI extra and lint commands, is in [docs/usage.md](docs/usage.md#development).
+Try it in a scratch folder:
+
+```bash
+mkdir /tmp/myshow && cd /tmp/myshow
+uv run --project /path/to/Scheinwerk sw init
+uv run --project /path/to/Scheinwerk sw new asset char/hero
+uv run --project /path/to/Scheinwerk sw ls
+```
+
+Or install `sw` once with `uv tool install --editable /path/to/Scheinwerk` and just type `sw`. More detail, including the GUI extra and lint commands, is in [docs/usage.md](docs/usage.md#install).

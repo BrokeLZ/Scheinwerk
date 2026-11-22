@@ -6,7 +6,7 @@ Scheinwerk is a lightweight, file-based VFX pipeline for one artist (macOS + Win
 
 ## Current phase
 
-> Phase 2 — CLI (see spec §16). Phase 1 (Core) is done. Update this line when a phase is done.
+> Phase 3 — GUI (see spec §16). Phases 1 (Core) and 2 (CLI) are done. Update this line when a phase is done.
 
 Work on one phase at a time. Don't build ahead (no GUI code during the core phase, no Houdini code during the GUI phase).
 
