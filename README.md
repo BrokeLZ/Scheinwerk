@@ -9,7 +9,7 @@ A lightweight, file-based VFX pipeline for one artist on macOS and Windows.
 
 Any DCC works without a plugin: Scheinwerk hands out the next path and you save or export through the DCC's own dialog.
 
-> **Status:** Phase 1 (Core) is in progress. The `sw` command exists but has no subcommands yet. See the roadmap in [docs/spec.md §16](docs/spec.md#16-roadmap).
+> **Status:** Phase 1 (Core) is done: the core works from Python, see [the Python API guide](docs/usage.md#python-api). Phase 2 (the `sw` CLI) is next; `sw` has no subcommands yet. Roadmap: [docs/spec.md §16](docs/spec.md#16-roadmap).
 
 ## Documentation
 
