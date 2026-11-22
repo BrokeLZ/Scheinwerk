@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePath
 
 from scheinwerk.core.errors import ParseError
-from scheinwerk.core.project import find_root, read_config
 from scheinwerk.core.templates import format_version, format_workfile, parse_version, parse_workfile
 
 TASK_AREAS = ("work", "cache")
@@ -33,6 +32,8 @@ class Context:
     @classmethod
     def from_path(cls, path: str | os.PathLike[str]) -> Context | None:
         """Parse any path, existing or not. None outside a project, ParseError outside an entity."""
+        from scheinwerk.core.project import find_root  # project imports context
+
         path = Path(path).absolute()
         root = find_root(path)
         if root is None:
@@ -113,6 +114,8 @@ def _split_category(root: Path, a: tuple[str, ...]) -> tuple[str | None, tuple[s
 
 
 def _template_departments(root: Path) -> set[str]:
+    from scheinwerk.core.project import read_config
+
     departments = read_config(root).get("departments", {})
     return {dept for per_type in departments.values() for dept in per_type}
 

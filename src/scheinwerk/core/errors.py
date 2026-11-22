@@ -17,3 +17,11 @@ class InvalidName(ScheinwerkError):
 
 class ParseError(ScheinwerkError):
     """A path inside a project can't be read as a context (spec §6)."""
+
+
+class NotFound(ScheinwerkError):
+    """Something that should exist doesn't (an entity, a file, a template)."""
+
+
+class AlreadyExists(ScheinwerkError):
+    """Creating something would clash with what is already there."""

@@ -10,7 +10,18 @@ RESERVED_WORDS = frozenset(
     {"publish", "media", "work", "cache", "assets", "shots", "shared", "io", "entity"}
 )
 KINDS = frozenset(
-    {"category", "asset", "sequence", "shot", "dept", "task", "product", "media", "layer"}
+    {
+        "project",
+        "category",
+        "asset",
+        "sequence",
+        "shot",
+        "dept",
+        "task",
+        "product",
+        "media",
+        "layer",
+    }
 )
 
 # [0-9] rather than \d: \d also matches non-ASCII digits.
@@ -74,3 +85,11 @@ def parse_workfile(filename: str, entity: str, dept: str, task: str) -> tuple[in
     prefix = re.escape(f"{entity}_{dept}_{task}_")
     match = re.fullmatch(prefix + _VERSION + r"\.([a-z0-9]+)", filename)
     return (int(match[1]), match[2]) if match else None
+
+
+def validate_extension(ext: str) -> None:
+    """Workfile extensions are lowercase letters/digits without the dot: `hip`, `nk`, `blend`."""
+    if not re.fullmatch(r"[a-z0-9]+", ext):
+        raise InvalidName(
+            f"Invalid extension {ext!r}: use lowercase letters and digits without the dot (hip)."
+        )

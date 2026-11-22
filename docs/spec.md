@@ -65,7 +65,7 @@ No database or server. No multi-user handling, locking or permissions. No task s
 ├── assets/
 │   └── [<category>/]                     # optional, one level max
 │       └── <asset>/
-│           ├── entity.json               # optional
+│           ├── entity.json               # written on create; marks an asset (§6.3)
 │           ├── <dept>/
 │           │   └── <task>/
 │           │       ├── work/             # workfiles, all DCCs, flat
@@ -95,7 +95,7 @@ No database or server. No multi-user handling, locking or permissions. No task s
 │           └── media/<name>/v###/
 ├── shared/                               # project-wide: HDAs, templates, hooks, LUTs
 │   ├── hooks/
-│   └── templates/                        # optional empty workfile templates per extension
+│   └── templates/                        # optional empty workfile templates: empty.<ext>
 └── io/                                   # in/ and out/: plates, references, deliveries
 ```
 
@@ -154,12 +154,12 @@ When the sequence isn't known yet (`sw new shot sq010_0010` creates it), a shot 
 | What | Counter scope | Next version |
 | --- | --- | --- |
 | Workfiles | one per task, shared across all extensions/DCCs | max version of all managed files in `work/` + 1 |
-| Products, USD layers | one per product / layer | max `v###` folder + 1 |
-| Media | one per media name, independent of workfiles | max `v###` folder + 1 |
+| Products, USD layers | one per product / layer | max `v###` folder (empty ones included) + 1 |
+| Media | one per media name, independent of workfiles | max `v###` folder (empty ones included) + 1 |
 
 - "Latest" = highest version number. For USD layers, the *current* version is the one the pointer references, which can differ after "Set as latest".
 - Creating a version folder uses `mkdir(exist_ok=False)`. On collision, increment and retry, so two DCCs exporting at once can't share a folder.
-- An empty version folder (no files besides `version.json`) is ignored by "latest" lookups.
+- An empty version folder (no files besides `version.json` and ignored files) is ignored by "latest" lookups, but its number stays taken.
 
 ---
 
@@ -205,6 +205,18 @@ class Context:
 
 Round-trip requirement: `Context.from_path(p).path() == p` for every path the core generates. This is the main test suite. A file inside a version folder can't round-trip (the context doesn't hold its name): its `path()` is the version folder. `v0001` parses as 1 and comes back as `v001`.
 
+### 6.3 Scanning (listing what exists)
+
+Listings come from scanning folders every time. Ignored entries (§4.2) are skipped everywhere; everything else is shown.
+
+- **Assets and categories.** A folder directly under `assets/` is an asset if it contains `entity.json`, `publish/`, `media/` or a department from the template. Otherwise it is a category (an empty folder too, e.g. a fresh "New category"), and every folder inside it is an asset. Creating an asset always writes `entity.json`, so assets made by Scheinwerk are never mistaken for categories.
+- **Sequences** are the folders under `shots/`; **shots** are the folders under a sequence except `_seq`.
+- **Departments** of an entity: its folders except `publish/` and `media/`. **Tasks**: the folders in a department.
+- **Order.** Assets by (category, name) with uncategorised ones first; sequences and shots by name; departments and tasks in template order, then the custom ones A–Z.
+- **Flags.** Entities, departments and tasks carry `valid` (name passes §5) and departments/tasks `custom` (not in the template). Invalid names are listed, never hidden.
+- **Workfiles.** Managed files in `work/`, newest first (same version: by extension). Everything else in `work/`, folders included, is listed as unmanaged.
+- **Versions.** `v###` folders, newest first. Other folders in a product are not versions.
+
 ---
 
 ## 7. Paths in files and the environment
@@ -235,6 +247,8 @@ Set by integrations from the **currently opened file's path**, never from stored
 | `SW_CACHE` | `<task>/cache` |
 | `SW_ENTITY_DIR` | absolute entity folder |
 
+`env_for` always returns every variable except `JOB` (the Houdini adapter adds that one). A variable that doesn't apply is `""`, so an integration overwrites values left over from the previous file. Paths use `/` on every OS: Houdini, Nuke and Blender accept them, and they need no escaping in expressions.
+
 ### 7.3 OCIO
 
 One OCIO config for all projects, configured per machine (the `OCIO` env var in the OS or the Houdini package). Scheinwerk does not manage OCIO in v1.
@@ -243,7 +257,7 @@ One OCIO config for all projects, configured per machine (the `OCIO` env var in 
 
 ## 8. JSON files
 
-All JSON is UTF-8, indented with 2 spaces and written atomically (write `*.tmp` in the same folder, then `os.replace`). Every file has an integer `schema`. Unknown keys are preserved on rewrite.
+All JSON is UTF-8 with LF line endings, indented with 2 spaces and written atomically (write `<name>.tmp` in the same folder, then `os.replace`). A write whose content is identical to the file on disk is skipped, so nothing re-syncs needlessly. The same applies to pointer and root layers. Every file has an integer `schema`. Unknown keys are preserved on rewrite.
 
 ### 8.1 `scheinwerk.json` (project root, required)
 
@@ -266,7 +280,7 @@ All JSON is UTF-8, indented with 2 spaces and written atomically (write `*.tmp` 
 ```
 
 - `departments` lists what the GUI and CLI offer when creating. Departments/tasks that exist on disk but not in the template are still shown, marked as *custom*.
-- `usd_layer_order`: strongest first, used for the shot root layer.
+- `usd_layer_order`: strongest first, used for the asset entry layer and the shot/sequence root layer (§9.2).
 - `templates`: optional overrides of §5.2/§5.3 patterns, keyed by template name. Empty = defaults.
 
 ### 8.2 `entity.json` (entity folder, optional)
@@ -275,7 +289,9 @@ All JSON is UTF-8, indented with 2 spaces and written atomically (write `*.tmp` 
 { "schema": 1, "frames": [1001, 1096] }
 ```
 
-Optional overrides: `fps`, `resolution`. Sequences have no `entity.json`; their range is derived from their shots.
+Optional overrides: `fps`, `resolution`. Sequences have no `entity.json`; their range is derived from their shots (lowest start to highest end; shots without a range are skipped).
+
+Creating an asset writes `{ "schema": 1 }`; creating a shot writes the same plus `frames` when a range is given. For assets the file mainly marks the folder as an asset (§6.3). Hand-made entity folders without it still work.
 
 ### 8.3 `version.json` (inside a version folder, optional, written on finalize)
 
@@ -292,7 +308,10 @@ Optional overrides: `fps`, `resolution`. Sequences have no `entity.json`; their 
 }
 ```
 
-All fields are optional. Readers must never require this file.
+All fields are optional. Readers must never require this file; a missing or broken file reads as no info.
+
+- `source` is root-relative; a source outside the project is refused. `dept` and `task` come from the source path.
+- Re-finalizing (e.g. "Edit comment") always sets `comment`, sets `source`/`dept`/`task`/`dcc` only when given, and keeps `user`, `created` and unknown keys.
 
 ### 8.4 User settings (machine-local, never in a project)
 
@@ -327,8 +346,8 @@ An extension with no entry opens with the OS default application.
 
 1. `next_usd(entity, layer)` → `publish/_usd/<layer>/v###/`.
 2. Export (Houdini USD ROP with the *Use Relative Paths* output processor).
-3. `finalize(…)` → writes `version.json`, then **as the last step** atomically rewrites the pointer layer.
-4. The asset entry layer (`<asset>.usd`) and the shot root layer (`<shot>.usd`) are created when the first layer is published and updated when a new layer name appears.
+3. `finalize(…)` → writes `version.json`, then atomically rewrites the pointer layer, then the entry/root layer. Nothing is written if the main file can't be determined.
+4. The entry/root layer `publish/_usd/<entity>.usd` (asset entry layer, shot or sequence root layer) sublayers `./<layer>/<layer>.usd` for every layer that has a pointer. It is rewritten on every finalize/set-current, so it exists from the first publish and picks up new layer names. Identical content is not rewritten (§8).
 
 Pointer layer format (ASCII content in a `.usd` file, written as plain text by the core, no `pxr` needed):
 
@@ -340,15 +359,32 @@ Pointer layer format (ASCII content in a `.usd` file, written as plain text by t
 )
 ```
 
-`defaultPrim` is always written (= entity name). Without it, references to the pointer fail. The pointer targets the main `.usd` file in the version folder. If that is ambiguous, `finalize` takes an explicit `main_file` argument.
+`defaultPrim` is always written (= entity name). Without it, references to the pointer fail. Layer paths must be file-relative (`./` or `../`); anything else is refused.
 
-Shot root layer: sublayers `./<layer>/<layer>.usd` for every existing layer, ordered by `usd_layer_order`, with `defaultPrim` unset (shot layers are sublayered or opened, not referenced).
+The pointer targets the main USD file (`.usd`, `.usda`, `.usdc`) at the top of the version folder: the only one if there is one, else the one with the recommended name `{entity}_{layer}_v###`, else `main_file` must be given (`finalize` and `set_current` both take it).
+
+Entry/root layer format. Layers are ordered strongest first: names in `usd_layer_order` in that order, then all others A–Z. The asset entry layer has `defaultPrim` = asset name (it is referenced); shot and sequence root layers have none (they are sublayered or opened, not referenced). With no layers: `subLayers = []`.
+
+```text
+#usda 1.0
+(
+    defaultPrim = "hero"
+    subLayers = [
+        @./fx/fx.usd@,
+        @./geo/geo.usd@
+    ]
+)
+```
 
 "Set as latest" on any USD version rewrites the pointer to that version. That is the only form of pinning/rollback.
 
 ### 9.3 Ingest
 
 `ingest(files, target)` copies files into the next workfile version (renamed to the template) or into the next product/media version folder (names kept). It never moves or deletes the originals.
+
+- Target a task: each file becomes its own next version, in the order given (`a.hip`, `b.hip` → v004, v005). The extension is lowercased (`scene.HIP` → `….hip`). A file without an extension is refused.
+- Target a product or media name: all files go into one new version folder. Two files with the same name are refused.
+- Only files, no folders. Everything is checked before the first copy.
 
 ### 9.4 Sync safety (Synology Drive)
 
@@ -363,22 +399,39 @@ Stdlib only. Paths are `pathlib.Path` at runtime and root-relative POSIX `str` w
 
 ```python
 # templates.py
-validate_name(kind, name, *, seq=None) -> None   # kind: category asset sequence shot dept task product media layer
+validate_name(kind, name, *, seq=None) -> None   # kind: project category asset sequence shot dept task product media layer
+validate_extension(ext) -> None                  # "hip": lowercase [a-z0-9]+, no dot
 shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
 format_version(n) -> str / parse_version(text) -> int | None
 format_workfile(entity, dept, task, version, ext) -> str
 parse_workfile(filename, entity, dept, task) -> tuple[int, str] | None   # None = unmanaged
 
+# fileio.py
+write_text(path, text) / write_json(path, data)  # atomic, LF, skips identical content
+read_json(path) -> dict | None              # None if missing or invalid
+copy_new(src, dest)                         # never overwrites (AlreadyExists)
+
 # project.py
 find_root(path) -> Path | None
 read_config(root) -> dict
 Project.find(path) -> Project | None
-Project.create(folder, name, **settings) -> Project
+Project.create(folder, name, **settings) -> Project   # writes scheinwerk.json + assets/ shots/ shared/{hooks,templates}/ io/{in,out}/;
+                                                      # refuses an existing or nested project and unknown settings
+project.root -> Path
 project.config -> dict                      # parsed scheinwerk.json
-project.assets() -> list[Asset]             # filesystem scan, sorted
-project.sequences() -> list[Sequence]
-project.shots(seq=None) -> list[Shot]
-project.entity(name) -> Asset | Shot | Sequence   # resolves by unique name
+project.setting(key)                        # config value or default
+project.department_template(entity_type) -> dict[str, list[str]]
+project.ignored(name) -> bool
+project.scan(folder, dirs_only=True) -> list[Path]   # sorted, ignored entries skipped
+project.assets() -> list[Entity]            # filesystem scan, sorted (§6.3)
+project.categories() -> list[str]
+project.sequences() -> list[Entity]
+project.shots(seq=None) -> list[Entity]
+project.entity(name) -> Entity              # resolves by unique name, prefixes asset: shot: seq:
+project.create_category(name) -> Path
+project.create_asset(name, category=None) -> Entity  # names unique project-wide, case-insensitive
+project.create_sequence(name) -> Entity
+project.create_shot(name, frames=None) -> Entity     # creates the sequence if needed
 project.rel(path) -> str                    # root-relative POSIX
 project.abs(rel) -> Path
 
@@ -387,31 +440,36 @@ Context.from_path(path) -> Context | None
 context.path() -> Path                      # inverse of from_path
 
 # entities.py  (thin, path-backed; no cached state)
-Asset / Shot / Sequence:
-    .name .path .category .frames
+Entity  # Asset, Shot and Sequence are one class told apart by .type ("asset" | "shot" | "sequence")
+    .project .type .name .category .sequence .path .valid .frames
+    .set_frames(start, end)                 # assets and shots; sequences derive theirs
     .departments() -> list[Department]
-    .create_department(name, tasks=("main",))
-    .products(usd=None) -> list[Product]
+    .department(name) -> Department
+    .create_department(name, tasks=("main",)) -> Department   # each task gets work/ and cache/
+    .products(usd=None) -> list[Product]    # USD layers first
     .media() -> list[Product]
-Department: .tasks() .create_task(name)
+    .create_product(name) -> Product
+Department: .entity .name .path .custom .valid .tasks() .task(name) .create_task(name)
 Task:
+    .entity .name .path .work_dir .cache_dir .custom .valid
     .workfiles() -> list[Workfile]          # newest first
     .unmanaged() -> list[Path]
     .latest_workfile(ext=None) -> Workfile | None
     .next_workfile(ext) -> Path
     .new_version_from(workfile) -> Path     # copy + bump
-    .new_empty_workfile(ext) -> Path        # from shared/templates/ if present
+    .new_empty_workfile(ext) -> Path        # copy of shared/templates/empty.<ext>, NotFound if missing
+Workfile: .path .version .ext
 
 # versions.py
-Product: .name .usd .versions() .latest() .next_version_dir() -> Path
-Version: .number .path .info -> dict | None   # version.json
+Product(project, path): .name .usd .is_media .pointer .versions() .latest() .current() .next_version_dir() -> Path
+Version(project, path): .number .path .info -> dict | None .files() .empty
 
 # publish.py
 next_publish(entity, name) -> Path
 next_media(entity, name) -> Path
 next_usd(entity, layer) -> Path
 finalize(version_dir, *, source=None, comment="", main_file=None, dcc=None) -> None
-set_current(usd_version_dir) -> None        # rewrite pointer
+set_current(usd_version_dir, *, main_file=None) -> None   # rewrite pointer
 ingest(files, target) -> list[Path]
 
 # env.py
@@ -419,13 +477,15 @@ env_for(context) -> dict[str, str]
 
 # hooks.py
 run_hook(name, **kwargs) -> None            # see §14
+user_dir() -> Path                          # machine-local settings folder (§8.4)
 
 # usd_pointer.py
 write_pointer(path, target_rel, default_prim) -> None
 write_root_layer(path, sublayers, default_prim=None) -> None
+read_pointer(path) -> str | None
 ```
 
-Errors: core functions raise `ScheinwerkError` subclasses (`NotInProject`, `InvalidName`, `ParseError`) with messages that can be shown to the user. They never call `sys.exit` or print.
+Errors: core functions raise `ScheinwerkError` subclasses (`NotInProject`, `InvalidName`, `ParseError`, `NotFound`, `AlreadyExists`) with messages that can be shown to the user. They never call `sys.exit` or print.
 
 ---
 
@@ -574,7 +634,8 @@ No integration needed: "Copy next version path" → Save As; "Copy next version 
   - `post_create(kind, path, context)`, where kind is one of `asset`, `shot`, `sequence`, `dept`, `task`, `product`
   - `post_save(path, context)`, called by integrations after Save next version
   - `post_publish(version_dir, context)`, called after `finalize`
-- Exceptions inside hooks are caught and logged, and never block the action.
+- The project comes from the `context` argument. Files whose name starts with `_` are skipped. Hook files are loaded fresh on every call, in filename order.
+- Exceptions inside hooks (including syntax errors) are caught and logged (logger `scheinwerk.hooks`), and never block the action.
 - No registry, no event bus, no priorities.
 
 ---
@@ -588,7 +649,7 @@ scheinwerk/
 ├── docs/spec.md            # this file
 ├── src/scheinwerk/
 │   ├── core/  templates.py project.py context.py entities.py versions.py
-│   │          publish.py env.py hooks.py usd_pointer.py errors.py
+│   │          publish.py env.py hooks.py usd_pointer.py fileio.py errors.py
 │   ├── cli.py
 │   ├── gui/   app.py browser.py columns.py actions.py dialogs.py theme.qss
 │   └── dcc/   base.py houdini.py nuke.py blender.py

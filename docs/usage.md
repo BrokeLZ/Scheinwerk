@@ -11,11 +11,14 @@ This guide grows with the code. A section that says *not yet available* describe
 1. [Install](#install)
 2. [Development](#development)
 3. [Concepts in five minutes](#concepts-in-five-minutes)
-4. [CLI (`sw`)](#cli-sw)
-5. [GUI](#gui)
-6. [DCC integrations](#dcc-integrations)
-7. [Sync (Synology Drive)](#sync-synology-drive)
-8. [Troubleshooting](#troubleshooting)
+4. [Python API](#python-api)
+5. [Workfile templates](#workfile-templates)
+6. [Hooks](#hooks)
+7. [CLI (`sw`)](#cli-sw)
+8. [GUI](#gui)
+9. [DCC integrations](#dcc-integrations)
+10. [Sync (Synology Drive)](#sync-synology-drive)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -77,7 +80,78 @@ docs/                  spec.md (contract) and usage.md (this guide)
 - **Custom departments** (not in the project template) work, but under an asset *without* a category, tools only recognise them once you're inside a task's `work/` or `cache/` folder. Assets in a category don't have this limit.
 - **The path is the context.** Any file's location tells Scheinwerk which project, entity, department, task, product and version it belongs to. Nothing else is stored.
 
+- **Assets vs. categories.** Every asset Scheinwerk creates gets an `entity.json`. A folder under `assets/` without `entity.json`, `publish/`, `media/` or a department is treated as a category. If you make asset folders by hand, add an `entity.json` containing `{"schema": 1}` (or a department folder) so they aren't mistaken for categories.
+- **Version folders** count up from the highest existing `v###`, even an empty one, so a number is never reused. Empty versions are skipped when looking for "latest".
+- **USD.** Publishing a layer updates its pointer (`publish/_usd/<layer>/<layer>.usd`) and the entity's entry/root layer (`publish/_usd/<entity>.usd`), which lists every layer strongest first: `usd_layer_order` from `scheinwerk.json`, then the rest A–Z.
+
 Full layout: [spec §4](spec.md#4-on-disk-layout).
+
+## Python API
+
+Until the CLI lands (Phase 2), the core is usable from any Python 3.11, including hython. It has no dependencies. Inside the repo use `uv run python`; elsewhere add `src/` to `PYTHONPATH`.
+
+```python
+from scheinwerk.core.project import Project
+from scheinwerk.core.publish import finalize, ingest, next_publish, next_usd, set_current
+from scheinwerk.core.context import Context
+
+proj = Project.create("/path/to/myshow", "myshow")     # or Project.find(any_path_inside)
+
+hero = proj.create_asset("hero", category="char")       # writes assets/char/hero/entity.json
+shot = proj.create_shot("sq010_0010", frames=(1001, 1096))  # creates sq010 too
+mdl = hero.create_department("mdl")                     # mdl/main/work + cache
+task = mdl.task("main")
+
+task.next_workfile("hip")        # …/work/hero_mdl_main_v001.hip  (path only, nothing created)
+task.new_empty_workfile("hip")   # copies shared/templates/empty.hip there
+task.new_version_from(task.latest_workfile())          # copy as next version
+
+vdir = next_publish(hero, "pants_drape_base")           # creates publish/pants_drape_base/v001/
+finalize(vdir, source=task.latest_workfile().path, comment="first drape")
+
+vdir = next_usd(hero, "asset")   # publish/_usd/asset/v001/ — export the USD here, then:
+finalize(vdir)                   # writes version.json, the pointer and hero.usd
+set_current(vdir)                # roll the pointer back to this version later
+
+ingest(["/Users/me/Downloads/scan.obj"], hero.create_product("scan"))  # copies, never moves
+
+proj.entity("sq010_0010")        # look up by name; "asset:", "shot:", "seq:" if ambiguous
+Context.from_path(vdir)          # what any path means: entity, dept, task, product, version…
+```
+
+All functions raise `scheinwerk.core.errors.ScheinwerkError` (or a subclass) with a message you can show as-is. Nothing in the core deletes, moves or overwrites your files. The full list of functions is in [spec §10](spec.md#10-core-api-scheinwerkcore).
+
+## Workfile templates
+
+"New empty workfile" copies `shared/templates/empty.<ext>` from the project. Scheinwerk can't make a valid empty `.hip` or `.blend` on its own, so save one from each DCC once:
+
+| DCC | Save an empty scene as |
+| --- | --- |
+| Houdini | `shared/templates/empty.hip` (or `empty.hipnc`) |
+| Nuke | `shared/templates/empty.nk` |
+| Blender | `shared/templates/empty.blend` |
+
+Without a template for an extension you get an error telling you which file to create.
+
+## Hooks
+
+Hooks are optional Python files that run after pipeline actions. Put them in `shared/hooks/` (per project) or in `hooks/` inside your user settings folder (`~/Library/Application Support/Scheinwerk/` on macOS, `%APPDATA%\Scheinwerk\` on Windows). Project hooks run first. Files starting with `_` are ignored.
+
+Define any of these functions:
+
+```python
+# shared/hooks/notify.py
+def post_create(kind, path, context):    # kind: asset, shot, sequence, dept, task, product
+    ...
+
+def post_publish(version_dir, context):  # after finalize
+    ...
+
+def post_save(path, context):            # after "Save next version" in a DCC (Phase 4+)
+    ...
+```
+
+`path` and `version_dir` are `pathlib.Path`s; `context` is a `Context` (`context.entity`, `context.dept`, …). A hook that crashes is logged and skipped: it never blocks the action.
 
 ## CLI (`sw`)
 
