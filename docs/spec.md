@@ -128,6 +128,8 @@ Scans skip entries that match `scheinwerk.json → ignore`. Defaults: `backup`, 
 | Sequence | `^[a-z]+[0-9]+$` | `sq010` |
 | Shot | `^{seq}_[0-9]{4}$` (must start with its sequence) | `sq010_0010` |
 
+When the sequence isn't known yet (`sw new shot sq010_0010` creates it), a shot name must match `<sequence regex>_[0-9]{4}` and the sequence is the part before the last `_`.
+
 ### 5.3 File and folder templates
 
 | Thing | Template | Example |
@@ -141,10 +143,10 @@ Scans skip entries that match `scheinwerk.json → ignore`. Defaults: `backup`, 
 | Media version folder | `media/{media}/v{version:03d}/` | `media/render_beauty/v004/` |
 | Media file (recommended) | `{entity}_{media}_v{version:03d}.{frame:04d}.{ext}` | `sq010_0010_render_beauty_v004.1001.exr` |
 
-- Workfile names are **enforced** for files Scheinwerk creates. Files in `work/` that don't match are listed as *unmanaged*. They are shown, never hidden or touched.
+- Workfile names are **enforced** for files Scheinwerk creates. A file in `work/` is *managed* only if its whole name matches the template filled in from its **folders** (entity, dept, task), with a lowercase `[a-z0-9]+` extension. Anything else is *unmanaged*: a different prefix, a suffix like `_final`, an uppercase `.HIP`, a nested subfolder. Unmanaged files are shown, never hidden or touched.
 - Names of files **inside** a version folder are recommended, not enforced. Everything in a version folder belongs to that version.
 - No comments in filenames.
-- Versions are written with 3 digits. Readers accept `v\d{3,}` (v1000+ keeps working).
+- Versions are written with 3 digits. Readers accept `v[0-9]{3,}` (ASCII digits only, v1000+ keeps working). Uppercase `V001` is not a version.
 - Frames are 4-digit and start at 1001 by default.
 
 ### 5.4 Versioning
@@ -352,6 +354,13 @@ Shot root layer: sublayers `./<layer>/<layer>.usd` for every existing layer, ord
 Stdlib only. Paths are `pathlib.Path` at runtime and root-relative POSIX `str` when persisted.
 
 ```python
+# templates.py
+validate_name(kind, name, *, seq=None) -> None   # kind: category asset sequence shot dept task product media layer
+shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
+format_version(n) -> str / parse_version(text) -> int | None
+format_workfile(entity, dept, task, version, ext) -> str
+parse_workfile(filename, entity, dept, task) -> tuple[int, str] | None   # None = unmanaged
+
 # project.py
 find_root(path) -> Path | None
 Project.find(path) -> Project | None

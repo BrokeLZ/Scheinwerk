@@ -28,5 +28,8 @@ extend-exclude = ["*.md"]  # ruff would rewrite code samples in docs
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "PTH", "SIM"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["scheinwerk"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
