@@ -186,16 +186,24 @@ class Context:
 
 ### 6.2 Rules
 
-1. Find the root (§2.3). If none is found, `Context.from_path()` returns `None`.
-2. Split the root-relative path into parts.
-3. `assets/…`: if `parts[2]` is a department name, a reserved area (`publish`, `media`) or `entity.json`, then `parts[1]` is the asset with no category. Otherwise `parts[1]` is the category and `parts[2]` the asset.
-4. `shots/<seq>/_seq/…` → entity_type `sequence`, entity = `<seq>`. `shots/<seq>/<shot>/…` → entity_type `shot`.
-5. After the entity: `<dept>/<task>/work|cache/…` or `publish/[_usd/]<name>/v###/…` or `media/<name>/v###/…`.
-6. Version and extension come from the filename (workfiles) or the `v###` folder (products/media).
+1. Find the root (§2.3). If none is found, `Context.from_path()` returns `None`. Relative paths are taken from the current directory; symlinks are not resolved.
+2. Split the root-relative path into parts. A path inside the project but not inside an entity (the root, `scheinwerk.json`, `assets/`, `shots/`, `shared/…`, `io/…`) raises `ParseError`.
+3. `assets/…` (optional category). Checked in this order:
+   1. Area keyword position (deep paths). If `parts[2]` is `publish`, `media` or `entity.json`, or `parts[4]` is `work` or `cache`, there is no category. If `parts[3]` is one of the first three, or `parts[5]` is `work` or `cache`, then `parts[1]` is the category. These words are reserved, so this works for custom departments too.
+   2. Otherwise (short paths): if there is no `parts[2]`, or it is a department name from the project template (any entity type), there is no category. Otherwise `parts[1]` is the category and `parts[2]` the asset.
+
+   Known limit: a short path under an asset with no category whose third part is a *custom* department (`assets/hero/groom`) reads as category `hero`, asset `groom`. Deep paths into that department parse correctly.
+4. `shots/<seq>/_seq/…` → entity_type `sequence`, entity = `<seq>`. The sequence folder `shots/<seq>` itself is the same sequence, so its `path()` is `shots/<seq>/_seq`. `shots/<seq>/<shot>/…` → entity_type `shot`. Shot names are not validated while parsing (`sw doctor` reports them).
+5. After the entity: `<dept>/<task>/work|cache/…` or `publish/[_usd/]<name>/v###/…` or `media/<name>/v###/…`. Folders that are none of these are kept as far as they are recognisable (an unknown folder in a task gives area `None`, a non-`v###` folder in a product gives version `None`).
+6. Version and extension:
+   - Workfiles: from a managed filename (§5.3). An unmanaged file in `work/` has version `None` and its own extension, so "unmanaged" is the same as `version is None`.
+   - Products/media: version from the `v###` folder, extension from the last suffix of a file inside it (`x.1001.bgeo.sc` → `sc`).
+   - USD: the pointer `_usd/<layer>/<layer>.usd` and the entry/root layer `_usd/<entity>.usd` have version `None` and ext `usd`.
+   - Nothing below `cache/` is parsed.
 7. Context is read from **folders**. The filename prefix is redundant and is not trusted for context. This is why product names may contain underscores.
 8. Parsing works for paths that don't exist yet (needed for "next version" paths).
 
-Round-trip requirement: `format(parse(p)) == p` for every path the core generates. This is the main test suite.
+Round-trip requirement: `Context.from_path(p).path() == p` for every path the core generates. This is the main test suite. A file inside a version folder can't round-trip (the context doesn't hold its name): its `path()` is the version folder. `v0001` parses as 1 and comes back as `v001`.
 
 ---
 
@@ -363,6 +371,7 @@ parse_workfile(filename, entity, dept, task) -> tuple[int, str] | None   # None 
 
 # project.py
 find_root(path) -> Path | None
+read_config(root) -> dict
 Project.find(path) -> Project | None
 Project.create(folder, name, **settings) -> Project
 project.config -> dict                      # parsed scheinwerk.json
