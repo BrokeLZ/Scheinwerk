@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -10,17 +11,29 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QWidget,
 )
 
+from scheinwerk.core.errors import ScheinwerkError
 from scheinwerk.core.settings import settings_path
-from scheinwerk.core.templates import parse_frames
+from scheinwerk.core.templates import parse_frames, step_name
 
 
-def _form(parent: QWidget, title: str, rows: list[tuple[str, QWidget]]) -> list[str] | None:
+def _field(widget: QWidget) -> QWidget:
+    """The input inside a row: the widget itself, or the `field` inside a row with a + button."""
+    if isinstance(widget, (QLineEdit, QComboBox)):
+        return widget
+    return widget.findChild(QComboBox, "field") or widget.findChild(QLineEdit, "field")
+
+
+def _form(
+    parent: QWidget, title: str, rows: list[tuple[str, QWidget]], focus: int = 0
+) -> list[str] | None:
     """Show the fields; return their values on OK, None on Cancel.
 
     The values are read here, while the dialog exists: once this returns, Qt may
@@ -38,10 +51,11 @@ def _form(parent: QWidget, title: str, rows: list[tuple[str, QWidget]]) -> list[
     buttons.rejected.connect(dialog.reject)
     form.addRow(buttons)
     if rows:
-        rows[0][1].setFocus()
+        _field(rows[focus][1]).setFocus()
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
-    return [w.currentText() if isinstance(w, QComboBox) else w.text() for _, w in rows]
+    fields = [_field(w) for _, w in rows]
+    return [f.currentText() if isinstance(f, QComboBox) else f.text() for f in fields]
 
 
 def _line(text: str = "", placeholder: str = "") -> QLineEdit:
@@ -50,6 +64,50 @@ def _line(text: str = "", placeholder: str = "") -> QLineEdit:
     edit.setMinimumWidth(320)
     edit.end(False)
     return edit
+
+
+def _combo(items: list[str], current: str = "", placeholder: str = "") -> QComboBox:
+    """A dropdown you can also type into."""
+    combo = QComboBox()
+    combo.setEditable(True)
+    combo.addItems(items)
+    combo.setCurrentText(current)
+    combo.lineEdit().setPlaceholderText(placeholder)
+    combo.setMinimumWidth(320)
+    return combo
+
+
+def _with_steps(field: QLineEdit | QComboBox, suggest: Callable[[], str], what: str) -> QWidget:
+    """`field` with - and + buttons that step its number down/up by 10 (sq010 -> sq020).
+    On an empty field (or one without a number) either button fills in `suggest()`."""
+    field.setObjectName("field")
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(field, 1)
+
+    def text() -> str:
+        return field.currentText() if isinstance(field, QComboBox) else field.text()
+
+    def step(delta: int) -> None:
+        try:
+            new = step_name(text(), delta) or suggest()
+        except ScheinwerkError as exc:
+            error(row, exc)
+            return
+        if isinstance(field, QComboBox):
+            field.setCurrentText(new)
+        else:
+            field.setText(new)
+
+    for label, delta, name in (("-", -1, "minusButton"), ("+", 1, "plusButton")):
+        button = QPushButton(label)
+        button.setObjectName(name)
+        button.setToolTip(f"{'previous' if delta < 0 else 'next'} {what}")
+        button.setAutoDefault(False)  # Enter still means OK
+        button.clicked.connect(lambda _checked=False, d=delta: step(d))
+        layout.addWidget(button)
+    return row
 
 
 def ask_text(
@@ -63,12 +121,53 @@ def _frames_or_none(text: str) -> tuple[int, int] | None:
     return parse_frames(text) if text.strip() else None
 
 
-def ask_shot(parent: QWidget, default: str = "") -> tuple[str, tuple[int, int] | None] | None:
-    rows = [("Name", _line(default, "sq010_0010")), ("Frames", _line("", "1001-1096 (optional)"))]
-    values = _form(parent, "New shot", rows)
+def ask_asset(
+    parent: QWidget, categories: list[str], category: str | None = None
+) -> tuple[str | None, str] | None:
+    """(category or None, name). The category list can be typed into; empty = no category."""
+    rows = [
+        ("Category", _combo(categories, category or "", "none")),
+        ("Name", _line("", "hero")),
+    ]
+    values = _form(parent, "New asset", rows, focus=1)
     if values is None:
         return None
-    return values[0].strip(), _frames_or_none(values[1])
+    return values[0].strip() or None, values[1].strip()
+
+
+def ask_sequence(parent: QWidget, next_name: Callable[[], str]) -> str | None:
+    edit = _line("", next_name())
+    values = _form(parent, "New sequence", [("Name", _with_steps(edit, next_name, "name"))])
+    return (values[0].strip() or None) if values else None
+
+
+def ask_shot(
+    parent: QWidget,
+    sequences: list[str],
+    sequence: str | None,
+    next_sequence: Callable[[], str],
+    next_shot: Callable[[str], str],
+) -> tuple[str, tuple[int, int] | None] | None:
+    """(`<sequence>_<shot>`, frames or None). `next_shot(seq)` returns a full shot name."""
+    seq_combo = _combo(sequences, sequence or "", next_sequence())
+    shot_edit = _line("", "0010")
+
+    def fill_shot() -> str:
+        seq = seq_combo.currentText().strip()
+        if not seq:
+            raise ScheinwerkError("Choose or type a sequence first.")
+        return next_shot(seq)[len(seq) + 1 :]
+
+    rows = [
+        ("Sequence", _with_steps(seq_combo, next_sequence, "sequence")),
+        ("Shot", _with_steps(shot_edit, fill_shot, "shot number")),
+        ("Frames", _line("", "1001-1096 (optional)")),
+    ]
+    values = _form(parent, "New shot", rows, focus=1)
+    if values is None:
+        return None
+    seq, shot, frames = (v.strip() for v in values)
+    return f"{seq}_{shot}", _frames_or_none(frames)
 
 
 def ask_frames(parent: QWidget, current: tuple[int, int] | None) -> tuple[int, int] | None:

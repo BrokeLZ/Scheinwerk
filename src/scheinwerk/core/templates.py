@@ -109,3 +109,16 @@ def format_product_stem(entity: str, product: str, version: int) -> str:
     """`hero_base_model_v002`: the recommended product/media file name (spec §5.3) without
     frame and extension. Copied "next version" paths end in it; the DCC adds the rest."""
     return f"{entity}_{product}_{format_version(version)}"
+
+
+def step_name(text: str, delta: int, step: int = 10) -> str | None:
+    """Move the trailing number of `text` to the next (delta > 0) or previous (delta < 0)
+    multiple of `step`, keeping prefix and digit count: `sq020` -> `sq030`, `0040` -> `0030`.
+    Never below `step`. None if `text` doesn't end in a number."""
+    match = re.fullmatch(r"(.*?)([0-9]+)", text.strip())
+    if not match:
+        return None
+    prefix, digits = match[1], match[2]
+    number = int(digits)
+    stepped = (number // step + 1) * step if delta > 0 else ((number - 1) // step) * step
+    return f"{prefix}{max(stepped, step):0{len(digits)}d}"

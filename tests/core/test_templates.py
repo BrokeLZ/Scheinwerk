@@ -16,6 +16,7 @@ from scheinwerk.core.templates import (
     parse_version,
     parse_workfile,
     shot_sequence,
+    step_name,
     validate_name,
 )
 
@@ -252,3 +253,31 @@ def test_format_product_stem(args: tuple, stem: str) -> None:
 
 def test_format_workfile_without_extension() -> None:
     assert format_workfile("hero", "mdl", "main", 4) == "hero_mdl_main_v004"
+
+
+# --- stepping names (GUI + / - buttons) -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "delta", "expected"),
+    [
+        ("sq010", 1, "sq020"),
+        ("sq020", 1, "sq030"),
+        ("sq015", 1, "sq020"),  # to the next multiple of 10
+        ("sq030", -1, "sq020"),
+        ("sq025", -1, "sq020"),
+        ("sq010", -1, "sq010"),  # never below 10
+        ("sq990", 1, "sq1000"),
+        ("0040", 1, "0050"),
+        ("0040", -1, "0030"),
+        ("0010", -1, "0010"),
+        (" sq010 ", 1, "sq020"),
+    ],
+)
+def test_step_name(text: str, delta: int, expected: str) -> None:
+    assert step_name(text, delta) == expected
+
+
+@pytest.mark.parametrize("text", ["", "sq", "abc", "  "])
+def test_step_name_without_number(text: str) -> None:
+    assert step_name(text, 1) is None

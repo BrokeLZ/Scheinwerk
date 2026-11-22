@@ -320,3 +320,55 @@ def test_entity_not_found(proj: Project) -> None:
         proj.entity("ghost")
     with pytest.raises(NotFound):
         proj.entity("thing:hero")
+
+
+# --- name suggestions (GUI "+" buttons, spec §5.2) ---------------------------------
+
+
+def test_category_choices(proj: Project) -> None:
+    assert proj.category_choices() == ["char", "prop", "env"]
+    proj.create_asset("car", category="vehicle")
+    proj.create_asset("hero", category="char")
+    assert proj.category_choices() == ["char", "prop", "env", "vehicle"]
+
+
+@pytest.mark.parametrize(
+    ("existing", "expected"),
+    [
+        ([], "sq010"),
+        (["sq010", "sq020"], "sq030"),
+        (["sq010", "sq015"], "sq020"),  # next multiple of 10
+        (["sq990"], "sq1000"),
+        (["ep01", "intro1"], "sq010"),  # other naming schemes are ignored
+    ],
+)
+def test_next_sequence_name(proj: Project, existing: list[str], expected: str) -> None:
+    for name in existing:
+        (proj.root / "shots" / name).mkdir(parents=True)
+    assert proj.next_sequence_name() == expected
+
+
+@pytest.mark.parametrize(
+    ("existing", "expected"),
+    [
+        ([], "sq010_0010"),
+        (["sq010_0010", "sq010_0020"], "sq010_0030"),
+        (["sq010_0010", "sq010_0015"], "sq010_0020"),
+        (["sq010_0010", "oops", "sq020_0090"], "sq010_0020"),  # only this sequence's shots
+    ],
+)
+def test_next_shot_name(proj: Project, existing: list[str], expected: str) -> None:
+    (proj.root / "shots/sq010").mkdir(parents=True)
+    for name in existing:
+        (proj.root / "shots/sq010" / name).mkdir()
+    assert proj.next_shot_name("sq010") == expected
+
+
+def test_next_shot_name_new_sequence(proj: Project) -> None:
+    assert proj.next_shot_name("sq030") == "sq030_0010"
+
+
+def test_next_shot_name_runs_out(proj: Project) -> None:
+    (proj.root / "shots/sq010/sq010_9990").mkdir(parents=True)
+    with pytest.raises(ScheinwerkError, match="sq010"):
+        proj.next_shot_name("sq010")

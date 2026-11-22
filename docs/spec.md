@@ -130,6 +130,8 @@ Scans skip entries that match `scheinwerk.json → ignore`. Defaults: `backup`, 
 
 When the sequence isn't known yet (`sw new shot sq010_0010` creates it), a shot name must match `<sequence regex>_[0-9]{4}` and the sequence is the part before the last `_`.
 
+Name suggestions (the GUI's `-`/`+` buttons) count in steps of 10. Each click moves the number at the end of the field to the next or previous multiple of 10, keeping prefix and digit count and never going below 10 (`sq010` → `sq020` → `sq030`; `0040` → `0030`); stepping doesn't skip names that already exist. On an empty field (or one without a number) either button fills in the next free name: the next sequence is `sq` + the next multiple of 10 above the highest existing `sq###` (`sq010`, `sq020`, …; other sequence names are ignored); the next shot is the next multiple of 10 above the highest `<seq>_####` in that sequence (`sq010_0010`, `sq010_0020`, …). When creating an asset, the categories `char`, `prop` and `env` are always offered, followed by any other existing categories.
+
 ### 5.3 File and folder templates
 
 | Thing | Template | Example |
@@ -405,6 +407,7 @@ Stdlib only. Paths are `pathlib.Path` at runtime and root-relative POSIX `str` w
 validate_name(kind, name, *, seq=None) -> None   # kind: project category asset sequence shot dept task product media layer
 validate_extension(ext) -> None                  # "hip": lowercase [a-z0-9]+, no dot
 parse_frames(text) -> tuple[int, int]            # "1001-1096"
+step_name(text, delta, step=10) -> str | None   # "sq020", +1 -> "sq030"; None without a number
 shot_sequence(shot) -> str                       # "sq010_0010" -> "sq010"
 format_version(n) -> str / parse_version(text) -> int | None
 format_workfile(entity, dept, task, version, ext=None) -> str   # no ext: hero_mdl_main_v003
@@ -434,6 +437,9 @@ project.sequences() -> list[Entity]
 project.shots(seq=None) -> list[Entity]
 project.entity(name) -> Entity              # resolves by unique name, prefixes asset: shot: seq:
 project.create_category(name) -> Path
+project.category_choices() -> list[str]    # char, prop, env, then other existing ones
+project.next_sequence_name() -> str         # sq030
+project.next_shot_name(seq) -> str          # sq010_0040
 project.create_asset(name, category=None) -> Entity  # names unique project-wide, case-insensitive
 project.create_sequence(name) -> Entity
 project.create_shot(name, frames=None) -> Entity     # creates the sequence if needed
@@ -602,7 +608,11 @@ Other interactions:
 - Double-click = open (workfile, unmanaged file, file in a version) or reveal (version).
 - Drag files from Finder/Explorer onto a task, or into the Files column of the selected task → ingest as next workfiles. Onto a product/media name, or into its Versions/Files columns → ingest as its next version.
 - F5 = Reload, plus an automatic refresh when the window regains focus (at most every 2 s).
-- The entity menu offers asset/category entries in Assets mode and sequence/shot entries in Shots mode. "New asset" takes `name` or `category/name` and pre-fills the selected category; "New shot" pre-fills `<selected sequence>_`.
+- The entity menu offers asset/category entries in Assets mode and sequence/shot entries in Shots mode.
+  - "New asset": a *Category* dropdown you can also type into (`category_choices()`, pre-set to the selected category, empty = no category) and a *Name* field.
+  - "New sequence": a *Name* field with `-`/`+` buttons (§5.2: step by 10; on an empty field, `next_sequence_name()`).
+  - "New shot": a *Sequence* dropdown of existing sequences with `-`/`+`, a *Shot* field for the 4-digit number with `-`/`+` (on an empty field, the next free number in the chosen sequence), and optional *Frames*. The shot name is `<sequence>_<shot>`.
+  - Presets come from the right-clicked item, which right-clicking also selects: a sequence folder, its `(sequence)` entry or any of its shots preset the *Sequence*; a category or an asset in it presets the *Category*.
 - "Open" uses the application configured for the extension in the user settings (§8.4, `dcc`), else the OS default. "Open with ▸" lists every configured application plus the system default.
 - Extension list for New empty workfile: `hip`, `nk`, `blend`, the `dcc` extensions from the user settings, the `shared/templates/empty.<ext>` templates and the extensions already in the task. New empty workfile is enabled only where a template exists.
 - "Copy next version path" copies a path without extension (§5.3). In Files it creates nothing. In Versions it creates the next `v###` folder (reserving the number), copies `…/v###/{entity}_{name}_v###` and selects the new, still empty version.

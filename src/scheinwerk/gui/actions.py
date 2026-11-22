@@ -87,16 +87,14 @@ def entity_menu(b: Browser, data: object) -> QMenu:
     if p is None:
         _add(menu, "No project open", None)
         return menu
-    category, sequence = b.entity_context()
+    category, sequence = b.entity_context(data)  # the right-clicked item
 
     def new_asset() -> None:
-        text = dialogs.ask_text(
-            b, "New asset", "Name", f"{category}/" if category else "", "hero or char/hero"
-        )
-        if text:
-            cat, _, name = text.rpartition("/")
+        answer = dialogs.ask_asset(b, p.category_choices(), category)
+        if answer:
+            cat, name = answer
             b.entity_key = f"asset:{name}"
-            b.run(p.create_asset, name, cat or None)
+            b.run(p.create_asset, name, cat)
 
     def new_category() -> None:
         name = dialogs.ask_text(b, "New category", "Name", hint="char")
@@ -105,13 +103,16 @@ def entity_menu(b: Browser, data: object) -> QMenu:
             b.run(p.create_category, name)
 
     def new_sequence() -> None:
-        name = dialogs.ask_text(b, "New sequence", "Name", hint="sq010")
+        name = dialogs.ask_sequence(b, p.next_sequence_name)
         if name:
             b.entity_key = f"seqgroup:{name}"
             b.run(p.create_sequence, name)
 
     def new_shot() -> None:
-        answer = b.run(dialogs.ask_shot, b, f"{sequence}_" if sequence else "")
+        sequences = [s.name for s in p.sequences()]
+        answer = b.run(
+            dialogs.ask_shot, b, sequences, sequence, p.next_sequence_name, p.next_shot_name
+        )
         if answer:
             b.entity_key = f"shot:{answer[0]}"
             b.run(p.create_shot, *answer)

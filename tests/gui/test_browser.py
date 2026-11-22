@@ -149,8 +149,15 @@ def trigger(menu, *path: str) -> None:
 def test_actions_call_core(
     browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dialogs, "ask_text", lambda *a, **k: "prop/lamp")
+    seen = {}
+
+    def ask_asset(parent, categories, category):
+        seen.update(categories=categories, category=category)
+        return "prop", "lamp"
+
+    monkeypatch.setattr(dialogs, "ask_asset", ask_asset)
     trigger(actions.entity_menu(browser, browser.entities.current_data()), "New asset…")
+    assert seen == {"categories": ["char", "prop", "env"], "category": "char"}
     assert (show.root / "assets/prop/lamp/entity.json").is_file()
     assert browser.entity().name == "lamp"  # the new asset is selected
 
@@ -227,3 +234,55 @@ def test_products_menu_has_no_next_version_entry(browser: Browser) -> None:
     browser.cols[0].select_key("pants")
     labels_ = menu_labels(actions.column_menu(browser, 0, browser.product()))
     assert not any("next version" in label for label in labels_)
+
+
+def test_new_shot_passes_sequences_and_suggestions(
+    browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = {}
+
+    def ask_shot(parent, sequences, sequence, next_sequence, next_shot):
+        seen.update(sequences=sequences, sequence=sequence)
+        seen.update(next_sequence=next_sequence(), next_shot=next_shot("sq010"))
+        return "sq010_0020", (1001, 1010)
+
+    monkeypatch.setattr(dialogs, "ask_shot", ask_shot)
+    browser.set_mode("shots")
+    browser.entities.select_key("shot:sq010_0010")
+    trigger(actions.entity_menu(browser, browser.entities.current_data()), "New shot…")
+    assert seen == {
+        "sequences": ["sq010"],
+        "sequence": "sq010",
+        "next_sequence": "sq020",
+        "next_shot": "sq010_0020",
+    }
+    assert show.entity("sq010_0020").frames == (1001, 1010)
+    assert browser.entity().name == "sq010_0020"
+
+
+@pytest.mark.parametrize("clicked", [("sequence", "sq020"), "sq020_0010", "sq020"])
+def test_new_shot_presets_the_right_clicked_sequence(
+    browser: Browser, show: Project, monkeypatch: pytest.MonkeyPatch, clicked
+) -> None:
+    show.create_shot("sq020_0010")
+    browser.set_mode("shots")
+    browser.entities.select_key("shot:sq010_0010")  # something else is selected
+    data = clicked if isinstance(clicked, tuple) else show.entity(clicked)
+    seen = {}
+
+    def ask_shot(parent, sequences, sequence, next_sequence, next_shot):
+        seen["sequence"] = sequence
+        return None
+
+    monkeypatch.setattr(dialogs, "ask_shot", ask_shot)
+    trigger(actions.entity_menu(browser, data), "New shot…")
+    assert seen == {"sequence": "sq020"}
+
+
+def test_right_click_selects_the_item(browser: Browser, show: Project) -> None:
+    browser.set_mode("shots")
+    column = browser.entities
+    item = next(i for i in column._items() if i.text(0) == "sq010_0010")
+    column.menuRequested.disconnect()  # don't open a real menu
+    column._menu(column.tree.visualItemRect(item).center())
+    assert browser.entity().name == "sq010_0010"

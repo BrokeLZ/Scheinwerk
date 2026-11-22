@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import fnmatch
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -49,11 +50,18 @@ DEFAULTS: dict = {
     "templates": {},
 }
 
+# Always offered when creating an asset, next to the categories that exist (spec §5.2).
+DEFAULT_CATEGORIES = ("char", "prop", "env")
+
 # Folders Project.create makes next to scheinwerk.json.
 LAYOUT = ("assets", "shots", "shared/hooks", "shared/templates", "io/in", "io/out")
 
 # Folder contents that mark an asset (as opposed to a category), besides a template department.
 ASSET_MARKERS = ("entity.json", "publish", "media")
+
+
+def _next_step(numbers: list[int], step: int = 10) -> int:
+    return (max(numbers, default=0) // step + 1) * step
 
 
 def find_root(path: str | os.PathLike[str]) -> Path | None:
@@ -196,6 +204,28 @@ class Project:
             options = " or ".join(sorted({f"{short[e.type]}:{bare}" for e in matches}))
             raise ScheinwerkError(f"{bare!r} is ambiguous: use {options}.")
         return matches[0]
+
+    # --- name suggestions (GUI "+" buttons) ----------------------------------
+
+    def category_choices(self) -> list[str]:
+        """The default categories, then any others that exist."""
+        return list(dict.fromkeys([*DEFAULT_CATEGORIES, *self.categories()]))
+
+    def next_sequence_name(self) -> str:
+        """`sq010`, `sq020`, …: the next multiple of 10 above the highest `sq###`."""
+        numbers = [
+            int(m[1]) for s in self.sequences() if (m := re.fullmatch(r"sq([0-9]+)", s.name))
+        ]
+        return f"sq{_next_step(numbers):03d}"
+
+    def next_shot_name(self, seq: str) -> str:
+        """`sq010_0010`, `sq010_0020`, …: the next multiple of 10 in that sequence."""
+        pattern = re.escape(seq) + r"_([0-9]{4})"
+        numbers = [int(m[1]) for s in self.shots(seq) if (m := re.fullmatch(pattern, s.name))]
+        number = _next_step(numbers)
+        if number > 9999:
+            raise ScheinwerkError(f"No shot numbers left in {seq} (shots have 4 digits).")
+        return f"{seq}_{number:04d}"
 
     # --- creating -----------------------------------------------------------
 

@@ -194,6 +194,8 @@ class Column(QWidget):
         item = self.tree.itemAt(pos)
         if item is None:
             self.tree.clearSelection()
+        else:
+            self.tree.setCurrentItem(item)  # the menu acts on what was right-clicked
         self.menuRequested.emit(
             item.data(0, DATA) if item else None, self.tree.viewport().mapToGlobal(pos)
         )

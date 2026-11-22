@@ -444,9 +444,11 @@ class Browser(QWidget):
         data = self.entities.current_data()
         return data if isinstance(data, Entity) else None
 
-    def entity_context(self) -> tuple[str | None, str | None]:
-        """(category, sequence) of the entity-column selection, for New asset/shot defaults."""
-        data = self.entities.current_data()
+    def entity_context(self, data: object = None) -> tuple[str | None, str | None]:
+        """(category, sequence) of an entity-column item (default: the selection), for the
+        New asset / New shot presets. A category or sequence folder counts as itself."""
+        if data is None:
+            data = self.entities.current_data()
         if isinstance(data, Entity):
             return data.category, data.sequence
         if isinstance(data, tuple):

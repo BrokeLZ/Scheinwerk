@@ -339,7 +339,7 @@ There are no buttons for actions: everything is in the right-click menu of the c
 
 | Right-click on | You get |
 | --- | --- |
-| Assets / shots | New asset… (type `name` or `category/name`), New category…, or New sequence…, New shot…; Set frame range…; Copy path / relative path; Reveal |
+| Assets / shots | New asset…, New category…, or New sequence…, New shot…; Set frame range…; Copy path / relative path; Reveal |
 | Departments | New department ▸ (from the template, or Custom…); Copy path; Reveal |
 | Tasks | New task…; Copy path; Reveal |
 | A workfile | Open, Open with ▸, New version from this, Copy path / relative path, Reveal |
@@ -347,6 +347,12 @@ There are no buttons for actions: everything is in the right-click menu of the c
 | Products / media | New product… / New media…, Ingest file(s)…, Copy path, Reveal |
 | Anywhere in Versions | **Copy next version path** (creates the new version folder) |
 | A version | Open folder, Finalize / Edit comment…, Set as current (USD), Copy path / relative path, Reveal |
+
+Creating assets, sequences and shots:
+
+- **New asset** asks for a *Category* and a *Name*. The category dropdown always has `char`, `prop` and `env` plus any other categories in the project; you can also type a new one, or leave it empty for an asset without category. Right-clicking a category or an asset in it presets that category.
+- **New sequence**: `+` and `-` count the name up and down in steps of 10 (`sq010` → `sq020` → `sq030`, and back). On an empty field the first click fills in the next free name. Or just type one.
+- **New shot** has a *Sequence* and a *Shot* number, each with `-`/`+` that count in steps of 10. On an empty *Shot* field, `+` starts at the next free number in the chosen sequence. Right-clicking a sequence folder or one of its shots and choosing *New shot…* presets that sequence. The shot becomes `sq020_0040`; a sequence that doesn't exist yet is created with it. *Frames* is optional.
 
 Also:
 
