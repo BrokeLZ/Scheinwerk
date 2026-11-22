@@ -35,6 +35,14 @@ uv sync --extra gui      # also installs PySide6 for the GUI
 
 From inside the repo, run any command with `uv run`, for example `uv run sw --help`.
 
+To have `sw` everywhere (in any project folder, in a DCC's shell), install it as a uv tool. `--editable` means it always runs the code in your checkout, so a `git pull` updates it:
+
+```bash
+uv tool install --editable /path/to/Scheinwerk
+```
+
+`uv tool uninstall scheinwerk` removes it again. If `sw` isn't found afterwards, run `uv tool update-shell` and open a new terminal.
+
 ## Development
 
 | Task | Command |
@@ -88,7 +96,7 @@ Full layout: [spec §4](spec.md#4-on-disk-layout).
 
 ## Python API
 
-Until the CLI lands (Phase 2), the core is usable from any Python 3.11, including hython. It has no dependencies. Inside the repo use `uv run python`; elsewhere add `src/` to `PYTHONPATH`.
+The core is usable from any Python 3.11, including hython: everything `sw` does is one call here. It has no dependencies. Inside the repo use `uv run python`; elsewhere add `src/` to `PYTHONPATH`.
 
 ```python
 from scheinwerk.core.project import Project
@@ -155,9 +163,148 @@ def post_save(path, context):            # after "Save next version" in a DCC (P
 
 ## CLI (`sw`)
 
-*Not yet available. Arrives in Phase 2.* Today `sw` only supports `--help` and `--version`.
+`sw` works like git: run it anywhere inside a project and it finds `scheinwerk.json` by walking up. Path arguments are relative to where you are.
 
-The planned command list is in [spec §11](spec.md#11-cli-sw). Each command will be documented here with examples as it lands.
+### Basics
+
+- **Entities by name.** `hero`, `sq010`, `sq010_0010`: names are unique, so no paths are needed. If an asset and a sequence share a name, write `asset:sq010` or `seq:sq010` (also `shot:`).
+- **`<dept>` or `<dept>/<task>`.** When a department has only one task you can leave the task out: `mdl` means `mdl/main`.
+- **Output.** Commands that print paths print absolute paths. Add `--relative` for root-relative ones (`assets/char/hero/…`) or `--json` for JSON (`{"path": …}` or `{"paths": […]}`). `ls`, `frames`, `context`, `env` and `doctor` also have `--json`.
+- **Errors** go to stderr as `sw: error: …`. Exit code 0 means success, 1 an error (also: `doctor` found issues, `latest` found nothing), 2 wrong usage.
+- **Help.** `sw --help`, `sw <command> --help`, `sw new <what> --help`.
+
+### Setting up a project
+
+```bash
+mkdir myshow && cd myshow
+sw init                                       # project name = folder name (or: sw init myshow)
+sw new asset char/hero                        # category/asset; plain `sw new asset hero` works too
+sw new category vehicle                       # an empty category
+sw new seq sq010
+sw new shot sq010_0010 --frames 1001-1096     # makes sq010 if it doesn't exist
+sw new dept hero mdl                          # tasks from the template (main)
+sw new dept hero groom --tasks main alt       # or your own tasks
+sw new task hero mdl blockout
+sw new product hero pants                     # an empty product folder
+sw frames sq010_0020 1097-1180                # set a range later; `sw frames sq010_0020` shows it
+```
+
+Each `new` prints what it created. Names must follow the [naming rules](#concepts-in-five-minutes); `sw` tells you what's wrong otherwise.
+
+### Looking around
+
+```console
+$ sw ls
+assets
+  char/hero
+shots
+  sq010  1001-1180
+    sq010_0010  1001-1096
+    sq010_0020  1097-1180
+
+$ sw ls hero
+hero (asset in char)
+departments
+  mdl
+    main
+products
+  asset  [usd]  latest v001, current v001
+  scan  latest v001
+media
+  (none)
+
+$ sw ls hero mdl            # tasks of a department
+$ sw ls hero mdl/main       # workfiles, newest first, then anything unmanaged
+```
+
+Things that don't follow the rules are listed with `[invalid name]`; departments and tasks that aren't in the project template show `[custom]`.
+
+`sw context [path]` shows what a path means to Scheinwerk (default: where you are):
+
+```console
+$ cd assets/char/hero/mdl/main/work && sw context
+root         /Users/you/projects/myshow
+entity_type  asset
+entity       hero
+category     char
+sequence     -
+dept         mdl
+task         main
+area         work
+…
+```
+
+### Workfiles
+
+```bash
+sw next hero mdl --ext hip          # path of the next version: …/hero_mdl_main_v002.hip
+sw latest hero --work mdl           # newest workfile of any DCC
+sw ingest ~/Downloads/old.hip hero mdl     # copy files in as new versions, one version each
+```
+
+`sw next` creates nothing: paste the path into the DCC's *Save As*. The version counter is shared by all DCCs in a task.
+
+### Publishing
+
+```bash
+V=$(sw next-usd hero asset)         # creates publish/_usd/asset/v00N/ and prints it
+# … export the USD into $V (Houdini: USD ROP with "Use Relative Paths") …
+sw finalize "$V" -m "first lookdev" --source "$(sw latest hero --work mdl)"
+
+sw next-publish hero pants          # publish/pants/v00N/
+sw next-media sq010_0010 render_beauty     # media/render_beauty/v00N/
+sw latest hero --product pants      # newest version that has files (also --usd, --media)
+sw set-current <usd version folder> # roll a USD layer's pointer back (or forward)
+sw ingest scan.obj ref.jpg hero --product scan   # copies into one new version folder
+```
+
+`finalize` writes `version.json` (comment, source workfile, user, date). For USD versions it also updates the layer's pointer and the entity's entry/root layer. If a USD version has several `.usd` files and none is named `{entity}_{layer}_v###.usd`, add `--main <file>`. Finalizing again only changes what you pass, so `sw finalize <dir> -m "new comment"` edits the comment.
+
+### Environment variables in a shell
+
+```bash
+eval "$(sw env --shell zsh)"        # zsh or bash: sets SW_ROOT, SW_ENTITY, SW_TASK_DIR, …
+sw env --shell pwsh | Invoke-Expression   # PowerShell
+```
+
+Without `--shell` it prints `KEY=value` lines. See [spec §7.2](spec.md#72-environment-variables) for the variables.
+
+### Health check
+
+```console
+$ sw doctor
+empty version  /Users/you/projects/myshow/assets/char/hero/publish/pants/v001
+1 issue
+```
+
+`sw doctor` never changes anything. It reports:
+
+| Kind | Meaning | What to do |
+| --- | --- | --- |
+| `invalid name` | A folder breaks the naming rules. | Rename it by hand (lowercase, `a-z0-9_`). |
+| `conflict copy` | Synology made a `…Conflict…` copy. | Compare with the original, keep one. |
+| `absolute path` | A `.usd`/`.usda`/`.nk` contains a drive letter, `/Users/`, `/Volumes/` or `\\server` path (the first one is shown). | Re-export with relative paths (USD ROP: *Use Relative Paths*; Nuke: `[getenv SW_ROOT]/…`). `cache/` is not checked. |
+| `empty version` | A version folder has no files (an export that failed or was cancelled). | Delete it or export into it. |
+
+It exits with 1 when it finds anything, so it can run in scripts.
+
+### All commands
+
+| Command | Does |
+| --- | --- |
+| `sw init [name]` | Make the current folder a project. |
+| `sw new asset\|category\|seq\|shot\|dept\|task\|product …` | Create things (see above). |
+| `sw ls [entity] [dept[/task]]` | List. |
+| `sw frames <entity> [START-END]` | Show or set a frame range. |
+| `sw next <entity> <dept[/task]> --ext E` | Next workfile path. |
+| `sw next-publish\|next-usd\|next-media <entity> <name>` | Create the next version folder. |
+| `sw latest <entity> --product N\|--usd L\|--media N\|--work D[/T]` | Newest version/workfile. |
+| `sw finalize <version_dir> [-m C] [--source P] [--main F]` | Write `version.json` (+ USD pointer). |
+| `sw set-current <usd_version_dir> [--main F]` | Point a USD layer at a version. |
+| `sw ingest <files…> <entity> <dept[/task]>` or `… --product N` / `--media N` | Copy files in. |
+| `sw context [path]` | What a path means. |
+| `sw env [path] [--shell zsh\|bash\|pwsh]` | `SW_*` variables. |
+| `sw doctor` | Report problems. |
 
 ## GUI
 
@@ -173,11 +320,14 @@ Until then, any DCC works by hand: create folders and names following the conven
 
 - Exclude `cache/` folders from sync with a Synology Drive file filter. Caches are large and never referenced downstream.
 - Scheinwerk writes pointer layers and `version.json` last and atomically, so the other machine never sees a pointer to a version that hasn't synced yet.
-- Synology conflict copies (`…_Conflict…`) are not hidden. `sw doctor` (Phase 2) will report them.
+- Synology conflict copies (`…_Conflict…`) are not hidden. `sw doctor` reports them.
 
 ## Troubleshooting
 
 | Problem | Fix |
 | --- | --- |
 | `uv: command not found` | Install uv (link above), then open a new terminal. |
+| `sw: command not found` | Use `uv run sw` inside the repo, or install it as a tool (see [Install](#install)). |
+| `sw: error: Not inside a Scheinwerk project` | `cd` into a project (any folder below its `scheinwerk.json`) or run `sw init`. |
+| `sw: error: 'x' is ambiguous` | Prefix the name: `asset:x`, `shot:x` or `seq:x`. |
 | Tests use the wrong Python | Run through `uv run`, which uses the repo's 3.11 environment. `uv sync` recreates it. |

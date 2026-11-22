@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from scheinwerk.core.errors import InvalidName
 from scheinwerk.core.fileio import read_json
 from scheinwerk.core.templates import parse_version, validate_name
 from scheinwerk.core.usd_pointer import read_pointer
@@ -59,6 +60,19 @@ class Product:
         return self.path.parent.name == "media"
 
     @property
+    def kind(self) -> str:
+        """The name kind for validation: "layer", "media" or "product"."""
+        return "layer" if self.usd else "media" if self.is_media else "product"
+
+    @property
+    def valid(self) -> bool:
+        try:
+            validate_name(self.kind, self.name)
+        except InvalidName:
+            return False
+        return True
+
+    @property
     def pointer(self) -> Path | None:
         return self.path / f"{self.name}.usd" if self.usd else None
 
@@ -83,7 +97,7 @@ class Product:
 
     def next_version_dir(self) -> Path:
         """Create and return the next v### folder. Never reuses an existing one."""
-        validate_name("layer" if self.usd else "media" if self.is_media else "product", self.name)
+        validate_name(self.kind, self.name)
         number = max((v.number for v in self.versions()), default=0) + 1
         while True:
             folder = self.path / f"v{number:03d}"

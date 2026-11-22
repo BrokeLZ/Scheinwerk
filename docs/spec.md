@@ -449,7 +449,7 @@ Entity  # Asset, Shot and Sequence are one class told apart by .type ("asset" | 
     .products(usd=None) -> list[Product]    # USD layers first
     .media() -> list[Product]
     .create_product(name) -> Product
-Department: .entity .name .path .custom .valid .tasks() .task(name) .create_task(name)
+Department: .entity .name .path .custom .valid .tasks() .task(name) .create_task(name)   # dept folder must exist
 Task:
     .entity .name .path .work_dir .cache_dir .custom .valid
     .workfiles() -> list[Workfile]          # newest first
@@ -461,7 +461,7 @@ Task:
 Workfile: .path .version .ext
 
 # versions.py
-Product(project, path): .name .usd .is_media .pointer .versions() .latest() .current() .next_version_dir() -> Path
+Product(project, path): .name .usd .is_media .kind .valid .pointer .versions() .latest() .current() .next_version_dir() -> Path
 Version(project, path): .number .path .info -> dict | None .files() .empty
 
 # publish.py
@@ -479,6 +479,9 @@ env_for(context) -> dict[str, str]
 run_hook(name, **kwargs) -> None            # see §14
 user_dir() -> Path                          # machine-local settings folder (§8.4)
 
+# doctor.py
+check(project) -> list[Issue]               # Issue(kind, path, detail); report only (§11)
+
 # usd_pointer.py
 write_pointer(path, target_rel, default_prim) -> None
 write_root_layer(path, sublayers, default_prim=None) -> None
@@ -491,33 +494,44 @@ Errors: core functions raise `ScheinwerkError` subclasses (`NotInProject`, `Inva
 
 ## 11. CLI (`sw`)
 
-argparse, entry point `sw`. Context defaults to the current directory, like git. Every command that prints a path accepts `--relative` and `--json`.
+argparse, entry point `sw`. The project is found from the current directory, like git; path arguments are relative to it. Every command that prints a path accepts `--relative` (root-relative POSIX) and `--json`; `ls`, `frames`, `context`, `env` and `doctor` also print JSON with `--json`.
 
 ```text
-sw init [name]                              # create scheinwerk.json in cwd
+sw init [name]                              # make cwd a project; name defaults to the folder name
 sw new asset [category/]hero
+sw new category char                        # empty category
 sw new seq sq010
-sw new shot sq010_0010 --frames 1001-1096   # creates sequence folder if needed
-sw new dept <entity> <dept> [--tasks main]
+sw new shot sq010_0010 [--frames 1001-1096] # creates the sequence folder if needed
+sw new dept <entity> <dept> [--tasks a b]   # default tasks: the template's, else main
 sw new task <entity> <dept> <task>
 sw new product <entity> <name>
 sw ls [entity] [dept[/task]]
-sw next <entity> <dept>/<task> --ext hip    # next workfile path
+sw next <entity> <dept>[/<task>] --ext hip  # next workfile path, creates nothing
 sw next-publish <entity> <name>             # creates + prints next version folder
 sw next-usd <entity> <layer>
 sw next-media <entity> <name>
-sw latest <entity> (--product N | --media N | --work dept/task)
+sw latest <entity> (--product N | --usd L | --media N | --work dept[/task])
+sw frames <entity> [START-END]              # show or set; sequences show their shots' range
 sw finalize <version_dir> [-m comment] [--source path] [--main file]
-sw set-current <usd_version_dir>
-sw ingest <files...> <entity> (<dept>/<task> | --product N | --media N)
-sw context <path>                           # parse and print context
-sw env <path> [--shell zsh|bash|pwsh]
-sw doctor [--fix-names]                     # naming violations, conflict copies,
-                                            # absolute paths in .usd/.usda/.nk, empty versions
-sw gui [path]
+sw set-current <usd_version_dir> [--main file]
+sw ingest <files...> <entity> (<dept>[/<task>] | --product N | --media N)
+sw context [path]                           # parse and print context (default: cwd)
+sw env [path] [--shell zsh|bash|pwsh]
+sw doctor                                   # report only, see below
+sw gui [path]                               # Phase 3
 ```
 
-Entity arguments resolve by unique name (`hero`, `sq010_0010`, `sq010`). If a name is ambiguous, use the prefixes `asset:`, `shot:` or `seq:`.
+- Entity arguments resolve by unique name (`hero`, `sq010_0010`, `sq010`). If a name is ambiguous, use the prefixes `asset:`, `shot:` or `seq:`.
+- `<dept>` alone stands for its task when the department has exactly one task (as in the GUI, §12.1).
+- Output goes to stdout; errors go to stderr as `sw: error: <message>`. Exit codes: 0 success, 1 a Scheinwerk error (or `doctor` found issues, or `latest` found nothing), 2 wrong usage.
+- Absolute paths are printed in the OS's own form; `--relative` and JSON keys are as described per command in the usage guide.
+- `sw ls` without arguments lists assets (uncategorised first, then `category/asset`, then empty categories) and shots grouped by sequence with frame ranges. With an entity: departments and tasks, products (`[usd]`, latest and current version) and media. With `dept`: its tasks. With `dept/task`: workfiles newest first, then unmanaged entries. Flags show as `[custom]` and `[invalid name]`.
+- `sw env --shell zsh|bash` prints `export KEY='value'`, `--shell pwsh` prints `$env:KEY = 'value'`, otherwise `KEY=value`. Use it as `eval "$(sw env --shell zsh)"`.
+- `sw doctor` only reports, never changes anything (`--fix-names` may come later with the rename tool, §16). It lists, ordered by kind then path:
+  - `invalid name`: categories, entities, departments, tasks, products, USD layers and media whose names break §5;
+  - `conflict copy`: any file or folder whose name contains `Conflict` (Synology);
+  - `absolute path`: the first drive letter, `/Users/`, `/Volumes/` or UNC path in each `.usd`, `.usda` and `.nk` file (`cache/` is skipped);
+  - `empty version`: version folders with no files besides `version.json`.
 
 ---
 
@@ -649,7 +663,7 @@ scheinwerk/
 ├── docs/spec.md            # this file
 ├── src/scheinwerk/
 │   ├── core/  templates.py project.py context.py entities.py versions.py
-│   │          publish.py env.py hooks.py usd_pointer.py fileio.py errors.py
+│   │          publish.py env.py hooks.py usd_pointer.py fileio.py doctor.py errors.py
 │   ├── cli.py
 │   ├── gui/   app.py browser.py columns.py actions.py dialogs.py theme.qss
 │   └── dcc/   base.py houdini.py nuke.py blender.py

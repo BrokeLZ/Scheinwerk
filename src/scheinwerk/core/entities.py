@@ -175,6 +175,8 @@ class Department:
 
     def create_task(self, name: str) -> Task:
         validate_name("task", name)
+        if not self.path.is_dir():
+            raise NotFound(f"{self.path} does not exist: create the department first.")
         path = self.path / name
         check_free(path)
         (path / "work").mkdir(parents=True)

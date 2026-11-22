@@ -81,6 +81,12 @@ def test_custom_tasks(hero: Entity) -> None:
     ]
 
 
+def test_task_needs_its_department(hero: Entity) -> None:
+    with pytest.raises(NotFound):
+        hero.department("mdl").create_task("main")
+    assert not (hero.path / "mdl").exists()
+
+
 def test_missing_entity_folder(proj: Project) -> None:
     ghost = Entity(proj, "asset", "ghost")
     with pytest.raises(NotFound):

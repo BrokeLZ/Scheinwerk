@@ -171,7 +171,10 @@ def _main_usd_file(ctx: Context, main_file: str | None) -> str:
     if not files:
         raise NotFound(f"No .usd file in {vdir}.")
     names = ", ".join(p.name for p in files)
-    raise ScheinwerkError(f"{len(files)} USD files in {vdir.name} ({names}): pass main_file.")
+    raise ScheinwerkError(
+        f"{len(files)} USD files in {vdir.name} ({names}): say which is the main file "
+        "(main_file, or --main in sw)."
+    )
 
 
 def _write_pointers(project: Project, ctx: Context, main: str) -> None:
