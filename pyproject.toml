@@ -1,0 +1,32 @@
+[project]
+name = "scheinwerk"
+version = "0.1.0"
+description = "Lightweight, file-based VFX pipeline for one artist."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []  # core is stdlib-only, forever (spec §2.5)
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.8"]
+
+[project.scripts]
+sw = "scheinwerk.cli:main"
+# scheinwerk-gui = "scheinwerk.gui.app:main"   # added in Phase 3 (GUI)
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8"]
+
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["*.md"]  # ruff would rewrite code samples in docs
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "PTH", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

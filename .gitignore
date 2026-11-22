@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Tooling
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
+._*
+Thumbs.db
+
+# Claude Code machine-local settings
+.claude/settings.local.json
