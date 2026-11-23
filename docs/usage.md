@@ -455,7 +455,9 @@ On each: set the name, press **New version** (creates the next `v###` and switch
 
 ### Building the HDAs
 
-Do this once; the three `.hda` files then live in the repo and every Houdini with the package loads them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly; labels are up to you).
+Do this once; the three HDA files then live in the repo and every Houdini with the package loads them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
+
+Houdini keeps copies of earlier saves in `otls/backup/`. Git ignores that folder.
 
 **Parameters on all three:**
 
@@ -470,7 +472,8 @@ Do this once; the three `.hda` files then live in the repo and every Houdini wit
 
 **Inside each**, one ROP connected to the HDA's input (the ROP may have any name):
 - Output path parameter: HScript expression `chs("../output")`.
-- *Post-Render Script*: enabled, language Python: `import scheinwerk.dcc.houdini as sw; sw.hda_post_render(hou.pwd().parent())`.
+- *Post-Render Script*: enabled, language Python (it defaults to Hscript, so switch it): `import scheinwerk.dcc.houdini as sw; sw.hda_post_render(hou.pwd().parent())`.
+- *Start/End* (`f1`/`f2`) default to 1–240: wherever a frame range is used, set them to `$FSTART` / `$FEND`.
 
 **`sw_publish_sop`** (SOP network, 1 input; route the input through to the output with a Null):
 - Extra parameters: `product` (String), `ext` (String, menu items `bgeo.sc`, `vdb`, `abc`, `obj`; default `bgeo.sc`), `frames` (Toggle "One file per frame", default on).
@@ -478,11 +481,11 @@ Do this once; the three `.hda` files then live in the repo and every Houdini wit
 
 **`sw_publish_lop`** (LOP network, 1 input, passes the stage through):
 - Extra parameter: `layer` (String, e.g. `asset`, `lgt`).
-- Inside: a **USD ROP** on the input. *Output File* (`lopoutput`) = `chs("../output")`. Leave the *Use Relative Paths* output processor on (it is by default). *Valid Frame Range*: render current frame.
+- Inside: a **USD ROP** on the input. *Output File* (`lopoutput`) = `chs("../output")`. Leave the *Use Relative Paths* output processor on (it is by default). *Valid Frame Range*: render current frame. A LOP subnet already contains an `output0` node: wire the input into it too, so the stage passes through.
 
 **`sw_render`** (LOP network, 1 input):
 - Extra parameter: `render_name` (String, e.g. `beauty`; the media folder becomes `render_beauty`).
-- Inside: a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* (`outputimage`) = `chs("../output")`, *Valid Frame Range*: frame range `$FSTART` / `$FEND`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
+- Inside: a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* (`outputimage`) = `chs("../output")`, *Valid Frame Range*: frame range `$FSTART` / `$FEND`. Leave *Render All Frames with a Single Process* off (the default): the output path is evaluated per frame, which only works with one husk run per frame. Wire the input into `output0` as for `sw_publish_lop`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
 
 The code recognises the HDA by its `product`, `layer` or `render_name` parameter, so the operator names are a convention, not a requirement.
 

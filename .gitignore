@@ -17,3 +17,6 @@ Thumbs.db
 
 # Claude Code machine-local settings
 .claude/settings.local.json
+
+# Houdini HDA backups (written next to the HDA on every save)
+integrations/houdini/otls/backup/
