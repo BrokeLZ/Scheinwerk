@@ -12,9 +12,10 @@ Every path decision is a core call; this module only reads the scene and the nod
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import hou
 
@@ -25,8 +26,8 @@ from scheinwerk.core.errors import NotFound, ScheinwerkError
 from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import finalize
-from scheinwerk.core.templates import format_version, parse_version
-from scheinwerk.core.versions import Product
+from scheinwerk.core.templates import format_version, validate_name
+from scheinwerk.core.versions import Product, Version, file_sequences
 
 log = logging.getLogger("scheinwerk.houdini")
 
@@ -269,7 +270,11 @@ def shots() -> list[tuple[str, tuple[int, int] | None]]:
 def shot_menu() -> list[str]:
     """For a Shot menu parm: "" means the SW_SHOT context option, then every shot."""
     items = ["", f"(context option {SHOT_OPTION})"]
-    for name, frames in shots():
+    try:
+        found = shots()
+    except ScheinwerkError:
+        found = []  # unsaved scene: a menu must not raise
+    for name, frames in found:
         items += [name, f"{name}  {frames[0]}-{frames[1]}" if frames else name]
     return items
 
@@ -297,25 +302,53 @@ def layers_below(layer: str, shot: str | None = None) -> list[str]:
 # Their parameters are described in docs/usage.md ("Building the HDAs"). The kind is told
 # apart by its name parm: product (SOP), layer (LOP) or render_name (render).
 
+RANGE_CURRENT, RANGE_SHOT, RANGE_CUSTOM = 0, 1, 2  # the HDAs' `range` menu
+
+
+def _node_entity(node: hou.Node) -> Entity:
+    shot = node.evalParm("shot") if node.parm("shot") else ""
+    return target_entity(shot or None)
+
 
 def _hda(node: hou.Node) -> tuple[Product, str, bool]:
-    """(product, extension, one file per frame) for an HDA node."""
-    shot = node.evalParm("shot") if node.parm("shot") else ""
-    entity = target_entity(shot or None)
+    """(product, extension, one file per frame) for an HDA node. Refuses a missing or
+    invalid name, so nothing is ever reserved, written or finalized without one."""
+    entity = _node_entity(node)
     if node.parm("layer"):
-        layer = node.evalParm("layer")
-        return Product(entity.project, entity.path / "publish" / "_usd" / layer), "usd", False
-    if node.parm("render_name"):
-        name = f"render_{node.evalParm('render_name')}"
-        return Product(entity.project, entity.path / "media" / name), "exr", True
-    product = Product(entity.project, entity.path / "publish" / node.evalParm("product"))
-    return product, node.evalParm("ext"), bool(node.evalParm("frames"))
+        parm, kind, ext, frames = "layer", "layer", "usd", False
+        name = node.evalParm("layer")
+        folder = entity.path / "publish" / "_usd"
+    elif node.parm("render_name"):
+        parm, kind, ext, frames = "render_name", "media", "exr", True
+        name = node.evalParm("render_name") and f"render_{node.evalParm('render_name')}"
+        folder = entity.path / "media"
+    else:
+        parm, kind, ext = "product", "product", node.evalParm("ext")
+        name = node.evalParm("product")
+        frames = node.evalParm("range") != RANGE_CURRENT
+        folder = entity.path / "publish"
+    if not name.strip():
+        raise ScheinwerkError(f"{node.path()}: set the {parm.replace('_', ' ')} first.")
+    validate_name(kind, name)
+    return Product(entity.project, folder / name), ext, frames
 
 
 def hda_version(node: hou.Node) -> int:
-    """The node's version parm, or 0 = the highest existing version (v001 if none)."""
-    product, _, _ = _hda(node)
-    return node.evalParm("version") or product.highest() or 1
+    """The node's version parm (at least 1)."""
+    return max(1, node.evalParm("version"))
+
+
+def hda_range(node: hou.Node) -> tuple[int, int]:
+    """Frames an HDA writes: the current frame, the shot's range (an entity without
+    one: the scene's range) or the node's own frame_range."""
+    mode = node.evalParm("range")
+    if mode == RANGE_CUSTOM:
+        return tuple(node.evalParmTuple("frame_range"))
+    if mode == RANGE_SHOT:
+        frames = _node_entity(node).frames
+        return frames or tuple(int(f) for f in hou.playbar.frameRange())
+    frame = int(round(hou.frame()))
+    return frame, frame
 
 
 def hda_output(node: hou.Node) -> str:
@@ -324,19 +357,119 @@ def hda_output(node: hou.Node) -> str:
     return product.file_path(hda_version(node), ext, _frame(frames)).as_posix()
 
 
+def hda_name_menu(node: hou.Node) -> list[str]:
+    """For the name parm's menu: the entity's existing products, USD layers or renders
+    (`render_*` media, shown without the prefix)."""
+    try:
+        entity = _node_entity(node)
+    except ScheinwerkError:
+        return []  # unsaved scene: a menu must not raise
+    if node.parm("layer"):
+        names = [p.name for p in entity.products(usd=True)]
+    elif node.parm("render_name"):
+        names = [m.name[7:] for m in entity.media() if m.name.startswith("render_")]
+    else:
+        names = [p.name for p in entity.products(usd=False)]
+    return [item for name in names for item in (name, name)]
+
+
+def hda_name_changed(node: hou.Node) -> None:
+    """Name parm callback: switch to that product's highest version (1 if it's new)."""
+    try:
+        product, _, _ = _hda(node)
+    except ScheinwerkError:
+        return  # empty or half-typed name: the buttons refuse it
+    node.parm("version").set(product.highest() or 1)
+
+
+def _show(exc: ScheinwerkError) -> None:
+    """A button's error as a message box; headless (tests, hython) it is raised."""
+    if not hou.isUIAvailable():
+        raise exc
+    hou.ui.displayMessage(str(exc), severity=hou.severityType.Error, title="Scheinwerk")
+
+
 def hda_new_version(node: hou.Node) -> None:
-    """ "New version" button: reserve the next v### and switch the node to it."""
-    product, _, _ = _hda(node)
-    folder = product.next_version_dir()
-    node.parm("version").set(parse_version(folder.name))
+    """ "New version" button: switch to the number after the highest existing v### (1 if
+    none). Creates nothing; Export makes the folder."""
+    try:
+        product, _, _ = _hda(node)
+    except ScheinwerkError as exc:
+        _show(exc)
+        return
+    node.parm("version").set((product.highest() or 0) + 1)
 
 
 def hda_execute(node: hou.Node) -> None:
-    """Export/Render button: press the inner ROP's own Render button."""
-    rop = next((c for c in node.children() if c.parm("execute")), None)
-    if rop is None:
-        raise ScheinwerkError(f"{node.path()} has no ROP inside it.")
+    """Export/Render button: check the node, create its version folder (the USD ROP doesn't
+    make missing folders), then press the inner ROP's Render button."""
+    try:
+        product, ext, _ = _hda(node)
+        rop = next((c for c in node.children() if c.parm("execute")), None)
+        if rop is None:
+            raise ScheinwerkError(f"{node.path()} has no ROP inside it.")
+    except ScheinwerkError as exc:
+        _show(exc)
+        return
+    product.file_path(hda_version(node), ext).parent.mkdir(parents=True, exist_ok=True)
     rop.parm("execute").pressButton()
+    _refresh_info(node)
+
+
+def _files(version: Version) -> str:
+    files = version.files()
+    text = f"{len(files)} file{'' if len(files) == 1 else 's'}"
+    groups = file_sequences(files)
+    if len(files) > 1 and len(groups) == 1 and groups[0].frames:
+        text += " {}-{}".format(*groups[0].frames)
+    return text
+
+
+def hda_info(node: hou.Node) -> str:
+    """The Info box: the product's latest (and for USD current) version, and what the
+    node's version will do.
+    Never raises: a parm expression must show text, not an error."""
+    try:
+        product, ext, _ = _hda(node)
+        number = hda_version(node)
+    except ScheinwerkError as exc:
+        return str(exc)
+    label = "Layer" if product.usd else "Media" if product.is_media else "Product"
+    action = node.parm("execute").parmTemplate().label() if node.parm("execute") else "Export"
+    lines = [f"{label:<9}{product.name}  ({len(product.versions())} versions on disk)"]
+    latest = product.latest()
+    if latest is None:
+        lines.append("Latest   none yet")
+    else:
+        info = latest.info or {}
+        when = info.get("created", "")[:16].replace("T", " ")
+        details = [format_version(latest.number), _files(latest), when, info.get("user", "")]
+        lines.append("Latest   " + " | ".join(d for d in details if d))
+        note = [f'"{info["comment"]}"'] if info.get("comment") else []
+        note += [f"from {PurePosixPath(info['source']).name}"] if info.get("source") else []
+        if note:
+            lines.append("         " + "  ".join(note))
+    if product.usd:
+        current = product.current()
+        shown = format_version(current.number) if current else "none"
+        lines.append(f"Current  {shown}  (the version the layer's pointer uses)")
+    folder = product.file_path(number, ext).parent
+    version = Version(product.project, folder)
+    if not folder.is_dir():
+        state = f"is new: {action} creates it"
+    elif version.empty:
+        state = f"exists, empty: {action} writes into it"
+    else:
+        state = f"exists ({_files(version)}): {action} overwrites it"
+    lines.append(f"Version  {format_version(number)} {state}")
+    return "\n".join(lines)
+
+
+def _refresh_info(node: hou.Node) -> None:
+    """Re-evaluate the Info box after files changed on disk (Houdini can't see that)."""
+    parm = node.parm("info")
+    with contextlib.suppress(AttributeError, hou.OperationFailed):  # no Info box / expression
+        parm.setExpression(parm.expression(), parm.expressionLanguage())
 
 
 def hda_post_render(node: hou.Node) -> None:

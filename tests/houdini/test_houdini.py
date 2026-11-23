@@ -37,17 +37,19 @@ pytestmark = pytest.mark.houdini
 
 
 @pytest.mark.skipif(not hythons(), reason="no Houdini installed")
+@pytest.mark.parametrize("checks", ["hython_checks.py", "hda_checks.py"])
 @pytest.mark.parametrize(
     "hython", hythons(), ids=lambda p: Path(p).parts[3] if "Applications" in p else p
 )
-def test_integration_in_houdini(hython: str, tmp_path: Path) -> None:
+def test_integration_in_houdini(hython: str, checks: str, tmp_path: Path) -> None:
+    """hython_checks: package, callbacks, helpers. hda_checks: exports with the real HDAs."""
     packages = tmp_path / "packages"
     packages.mkdir()
     write_json(packages / "scheinwerk.json", package_data(REPO))
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
     env["HOUDINI_PACKAGE_DIR"] = str(packages)
     result = subprocess.run(
-        [hython, str(REPO / "tests/houdini/hython_checks.py"), str(tmp_path), str(REPO)],
+        [hython, str(REPO / "tests/houdini" / checks), str(tmp_path), str(REPO)],
         capture_output=True,
         text=True,
         env=env,

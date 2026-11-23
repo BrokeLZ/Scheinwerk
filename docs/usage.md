@@ -439,53 +439,76 @@ They point at the **highest existing version** (v001 if there is none). For a ne
 
 ### Publishing with the HDAs
 
-Three HDAs do the publishing (you build them once, see below):
+Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render*:
 
 | HDA | Network | Writes to |
 | --- | --- | --- |
 | `sw_publish_sop` | SOP | `publish/<product>/v###/` (bgeo.sc, vdb, abc, obj; one file or one per frame) |
 | `sw_publish_lop` | LOP | `publish/_usd/<layer>/v###/<entity>_<layer>_v###.usd`, relative paths, pointer updated |
-| `sw_render` | LOP | `media/render_<name>/v###/…_v###.####.exr` (Karma) |
+| `sw_render` | LOP | `media/render_<name>/v###/…_v###.####.exr` (Karma) — **work in progress** |
 
-On each: set the name, press **New version** (creates the next `v###` and switches the node to it), then **Export** / **Render**. When it finishes, the version is finalized: `version.json` gets your *Comment* and the scene as source, and for USD the layer's pointer and the entity's root layer are updated. Exporting again **overwrites the same version** until you press *New version* again, like Houdini's File Cache. *Version* 0 means "the highest existing one".
+*Scheinwerk Render* is a work in progress: it renders and versions simple Karma renders, but it is far from done and will change.
 
-**Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error.
+All three work the same way:
+
+- **Name** (*Product*, *Layer* or *Render Name*): type a new name, or pick an existing one from the menu next to the field. Picking one switches *Version* to its newest version. While the name is empty, *New Version* and *Export*/*Render* are greyed out, and nothing can be written without one.
+- **Frame Range**: *Current Frame*, *Shot Range* (the shot's range; an asset without a range uses the scene's) or *Custom Range*, which shows *Start/End*. Those follow the scene's range until you type your own numbers. What a range means per HDA:
+  - *Scheinwerk Publish*: one file per frame; *Current Frame* writes one file without a frame number (`hero_box_v002.abc`). Default: *Shot Range*.
+  - *Scheinwerk Publish USD*: always one `.usd`; a range writes the animation into it as time samples. Default: *Current Frame*.
+  - *Scheinwerk Render*: one `.exr` per frame, also for a single frame. Default: *Shot Range*.
+- **Version** starts at 1. **New Version** switches to the next free number; nothing is created yet. **Export** / **Render** creates the version folder and writes into it. When it finishes, the version is finalized: `version.json` gets your *Comment* and the scene as source, and for USD the layer's pointer and the entity's root layer are updated. Exporting again **overwrites the same version** until you press *New Version* again, like Houdini's File Cache.
+- **Info** (at the bottom, read-only) shows what is on disk and what the button will do. The USD HDA also shows which version the layer's pointer uses:
+
+  ```text
+  Layer    asset  (2 versions on disk)
+  Latest   v002 | 1 file | 2026-11-23 15:42 | lorenz
+           "first"  from hero_lookdev_main_v004.hip
+  Current  v002  (the version the layer's pointer uses)
+  Version  v003 is new: Export creates it
+  ```
+
+  It updates when you change the name or version and after an export. Changes made outside Houdini show up the next time it updates.
+
+**Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range.
 
 **USD stack.** A department's scene loads the layers below it and publishes only its own. `sw.layers_below("lgt")` lists the existing pointer layers below lighting (fx, anim, layout, per `usd_layer_order`) as `$JOB/…` paths for a Sublayer LOP.
 
 ### Building the HDAs
 
-Do this once; the three HDA files then live in the repo and every Houdini with the package loads them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
+The HDAs are already in the repo. This section describes what is inside them, for changing or rebuilding one. `uv run pytest -m houdini` exports with all three, so run it after any change. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
 
 Houdini keeps copies of earlier saves in `otls/backup/`. Git ignores that folder.
 
-**Parameters on all three:**
+Below, `import sw` stands for `import scheinwerk.dcc.houdini as sw`, and `SW` for the one-line expression form `__import__("scheinwerk.dcc.houdini", fromlist=["x"])`.
+
+**Parameters on all three**, in this order:
 
 | Name | Type | Setup |
 | --- | --- | --- |
-| `version` | Integer | Default 0, range 0–999. |
-| `new_version` | Button | Callback (Python): `import scheinwerk.dcc.houdini as sw; sw.hda_new_version(kwargs["node"])` |
-| `shot` | String | Menu → *Use Menu Script*, Python: `import scheinwerk.dcc.houdini as sw; return sw.shot_menu()`. Only matters in sequence scenes. |
+| `product` / `layer` / `render_name` | String | The name. Default empty. Menu *Replace* (a text field with a menu), menu script `import sw` and `return sw.hda_name_menu(kwargs["node"])` on two lines. Callback (Python): `import sw; sw.hda_name_changed(kwargs["node"])`. |
+| `ext` (`sw_publish_sop` only) | String | Menu items `bgeo.sc`, `vdb`, `abc`, `obj`; default `bgeo.sc`. |
+| `range` | Ordinal menu | Tokens `current`, `shot`, `custom` (in this order); default as listed above. |
+| `frame_range` | Integer, 2 components (`frame_range1`/`2`) | Default expressions `$FSTART` / `$FEND`. *Hide When* `{ range != custom }`. |
+| `version` | Integer | Default 1, range 1–999, strict minimum. |
+| `new_version` | Button | Callback (Python): `import sw; sw.hda_new_version(kwargs["node"])`. *Disable When* on the empty name, e.g. `{ product == "" }`. |
+| `shot` | String | Menu → *Use Menu Script*, Python on two lines: `import sw` and `return sw.shot_menu()`. Only matters in sequence scenes. |
 | `comment` | String | |
-| `output` | String | Default is an expression, language Python: `__import__("scheinwerk.dcc.houdini", fromlist=["x"]).hda_output(hou.pwd())`. Tick *Disable when* or make it read-only if you like; it shows where the node writes. |
-| `execute` | Button | Callback (Python): `import scheinwerk.dcc.houdini as sw; sw.hda_execute(kwargs["node"])` |
+| `output` | String | Default Python expression `SW.hda_output(hou.pwd())`. It shows where the node writes. |
+| `execute` | Button | Label *Export* (*Render* on `sw_render`). Callback (Python): `import sw; sw.hda_execute(kwargs["node"])`. *Disable When* as `new_version`. |
+| `info` | String | After a separator. Multi-line (tags `editor` 1, `editorlines` 4-7), default Python expression `SW.hda_info(hou.pwd())`, *Disable When* `{ version > -1 }` (always true, so it reads as read-only text). |
+
+Menu scripts have to be two lines. Houdini runs a one-line menu script as an expression, so `…; return …` on one line is a `SyntaxError`. Callbacks run as statements, so one line with `;` is fine there.
 
 **Inside each**, one ROP connected to the HDA's input (the ROP may have any name):
 - Output path parameter: HScript expression `chs("../output")`.
-- *Post-Render Script*: enabled, language Python (it defaults to Hscript, so switch it): `import scheinwerk.dcc.houdini as sw; sw.hda_post_render(hou.pwd().parent())`.
-- *Start/End* (`f1`/`f2`) default to 1–240: wherever a frame range is used, set them to `$FSTART` / `$FEND`.
+- *Valid Frame Range* (`trange`): HScript expression `ch("../range") != 0`. *Start/End* (`f1`/`f2`): Python expressions `SW.hda_range(hou.pwd().parent())[0]` and `[1]`.
+- *Post-Render Script*: enabled, language Python (it defaults to Hscript, so switch it): `import sw; sw.hda_post_render(hou.pwd().parent())`.
 
-**`sw_publish_sop`** (SOP network, 1 input; route the input through to the output with a Null):
-- Extra parameters: `product` (String), `ext` (String, menu items `bgeo.sc`, `vdb`, `abc`, `obj`; default `bgeo.sc`), `frames` (Toggle "One file per frame", default on).
-- Inside: a **ROP Geometry Output** on the input. *Output File* (`sopoutput`) = `chs("../output")`. *Valid Frame Range* (`trange`) = expression `ch("../frames")` (0 = current frame, 1 = frame range), start/end `$FSTART` / `$FEND`.
+**`sw_publish_sop`** (SOP network, 1 input): a **ROP Geometry Output** (*Output File* `sopoutput`) on the input, and a Null on the input as display/render node, so the geometry passes through.
 
-**`sw_publish_lop`** (LOP network, 1 input, passes the stage through):
-- Extra parameter: `layer` (String, e.g. `asset`, `lgt`).
-- Inside: a **USD ROP** on the input. *Output File* (`lopoutput`) = `chs("../output")`. Leave the *Use Relative Paths* output processor on (it is by default). *Valid Frame Range*: render current frame. A LOP subnet already contains an `output0` node: wire the input into it too, so the stage passes through.
+**`sw_publish_lop`** (LOP network, 1 input): a **USD ROP** (*Output File* `lopoutput`) on the input. Leave the *Use Relative Paths* output processor on and *Output File per Frame* off (both are the defaults). A LOP subnet already contains an `output0` node: wire the input into it too, so the stage passes through.
 
-**`sw_render`** (LOP network, 1 input):
-- Extra parameter: `render_name` (String, e.g. `beauty`; the media folder becomes `render_beauty`).
-- Inside: a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* (`outputimage`) = `chs("../output")`, *Valid Frame Range*: frame range `$FSTART` / `$FEND`. Leave *Render All Frames with a Single Process* off (the default): the output path is evaluated per frame, which only works with one husk run per frame. Wire the input into `output0` as for `sw_publish_lop`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
+**`sw_render`** (LOP network, 1 input): a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* `outputimage`. Leave *Render All Frames with a Single Process* off (the default): the output path is evaluated per frame, which only works with one husk run per frame. Wire the input into `output0` as for `sw_publish_lop`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
 
 The code recognises the HDA by its `product`, `layer` or `render_name` parameter, so the operator names are a convention, not a requirement.
 

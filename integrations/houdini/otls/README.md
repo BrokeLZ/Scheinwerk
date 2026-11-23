@@ -1,11 +1,9 @@
 # Scheinwerk HDAs
 
-Save the three Scheinwerk HDAs here, so the package puts them on Houdini's path:
+The three Scheinwerk HDAs, put on Houdini's path by the package:
 
-- `sw_publish_sop.hda`
-- `sw_publish_lop.hda`
-- `sw_render.hda`
+- `sw_publish_sop.hdalc` (*Scheinwerk Publish*, SOP)
+- `sw_publish_lop.hdalc` (*Scheinwerk Publish USD*, LOP)
+- `sw_render.hdalc` (*Scheinwerk Render*, LOP; work in progress, far from done)
 
-With Houdini Indie the extension is `.hdalc`, with Apprentice `.hdanc`.
-
-How to build them: see "Building the HDAs" in `docs/usage.md`.
+`.hdalc` because they were saved with Houdini Indie. What is inside them: "Building the HDAs" in `docs/usage.md`. `uv run pytest -m houdini` exports with each one.

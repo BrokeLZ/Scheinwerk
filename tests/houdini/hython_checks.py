@@ -71,7 +71,13 @@ def node_with(parms):
     node = hou.node("/obj").createNode("null")
     group = node.parmTemplateGroup()
     for name, value in parms.items():
-        if isinstance(value, int):
+        if isinstance(value, tuple):  # frame_range: frame_range1, frame_range2
+            group.append(
+                hou.IntParmTemplate(
+                    name, name, 2, default_value=value, naming_scheme=hou.parmNamingScheme.Base1
+                )
+            )
+        elif isinstance(value, int):
             group.append(hou.IntParmTemplate(name, name, 1, default_value=(value,)))
         else:
             group.append(hou.StringParmTemplate(name, name, 1, default_value=(value,)))
@@ -83,18 +89,25 @@ sop = node_with(
     {
         "product": "fx_sim",
         "ext": "bgeo.sc",
-        "frames": 1,
-        "version": 0,
+        "range": sw.RANGE_SHOT,
+        "frame_range": (1001, 1005),
+        "version": 1,
         "comment": "first",
         "shot": "",
     }
 )
 assert sw.hda_output(sop).endswith("fx_sim/v001/hero_fx_sim_v001.1001.bgeo.sc")
+fx_sim = hero.path / "publish/fx_sim"
+sw.hda_new_version(sop)  # nothing on disk: 1, and New Version creates no folder
+assert sop.evalParm("version") == 1 and not fx_sim.exists()
+sw.hda_new_version(sop)  # still nothing on disk: still 1
+assert sop.evalParm("version") == 1
+(fx_sim / "v001").mkdir(parents=True)
+(fx_sim / "v001/hero_fx_sim_v001.1001.bgeo.sc").write_bytes(b"")
 sw.hda_new_version(sop)
-sw.hda_new_version(sop)
-assert sop.evalParm("version") == 2
+assert sop.evalParm("version") == 2 and not (fx_sim / "v002").exists()
 out = Path(sw.hda_output(sop))
-out.parent.mkdir(parents=True, exist_ok=True)
+out.parent.mkdir(parents=True, exist_ok=True)  # what Export does before the ROP runs
 out.write_bytes(b"")
 assert sop.parm("comment") is not None
 sw.hda_post_render(sop)
@@ -102,17 +115,98 @@ info = json.loads((out.parent / "version.json").read_text(encoding="utf-8"))
 assert info["comment"] == "first" and info["dcc"] == "houdini", info
 assert info["source"] == "assets/char/hero/mdl/main/work/hero_mdl_main_v002.hip", info
 
-lop = node_with({"layer": "asset", "version": 0, "comment": "look", "shot": ""})
+# the Info box: latest version with its details, and what the node's version will do
+text = sw.hda_info(sop)
+assert "Latest   v002" in text and '"first"' in text and "hero_mdl_main_v002.hip" in text, text
+assert "v002 exists (1 file): Export overwrites it" in text, text
+sop.parm("version").set(3)
+assert "v003 is new: Export creates it" in sw.hda_info(sop), sw.hda_info(sop)
+sop.parm("version").set(2)
+fresh = node_with({"product": "nothing_yet", "ext": "abc", "range": 0, "version": 1, "shot": ""})
+assert "Latest   none yet" in sw.hda_info(fresh), sw.hda_info(fresh)
+
+# name menu: existing products (no USD layers, no media); picking one sets its version
+assert sw.hda_name_menu(sop) == ["fx_sim", "fx_sim", "pants", "pants"]
+sop.parm("product").set("pants")
+sw.hda_name_changed(sop)
+assert sop.evalParm("version") == 3  # pants has an (empty) v003
+sop.parm("product").set("brand_new")
+sw.hda_name_changed(sop)
+assert sop.evalParm("version") == 1
+sop.parm("product").set("fx_sim")
+sw.hda_name_changed(sop)
+assert sop.evalParm("version") == 2
+
+# frame range: current frame (one file, no frame number), shot range, custom range
+playbar = tuple(int(f) for f in hou.playbar.frameRange())
+assert sw.hda_range(sop) == playbar  # an asset without frames: the scene's range
+sop.parm("range").set(sw.RANGE_CURRENT)
+assert sw.hda_range(sop) == (1001, 1001)
+assert sw.hda_output(sop).endswith("fx_sim/v002/hero_fx_sim_v002.bgeo.sc")
+sop.parm("range").set(sw.RANGE_CUSTOM)
+assert sw.hda_range(sop) == (1001, 1005)
+assert sw.hda_output(sop).endswith("hero_fx_sim_v002.1001.bgeo.sc")
+
+# no product (or an invalid one): nothing is reserved, written or finalized
+for name in ("", "Bad Name"):
+    blank = node_with({"product": name, "ext": "bgeo.sc", "range": 0, "version": 1, "shot": ""})
+    for action in (sw.hda_output, sw.hda_new_version, sw.hda_execute, sw.hda_post_render):
+        try:
+            action(blank)
+            raise AssertionError(f"{action.__name__} accepted product {name!r}")
+        except sw.ScheinwerkError:
+            pass
+    assert sw.hda_name_menu(blank) == ["fx_sim", "fx_sim", "pants", "pants"]
+    sw.hda_name_changed(blank)  # quietly does nothing
+    assert "product" in sw.hda_info(blank)  # explains instead of raising
+assert sorted(p.name for p in (hero.path / "publish").iterdir()) == ["fx_sim", "pants"]
+
+# LOP: a range still writes one .usd (time samples); the Info box shows the pointer
+lop = node_with(
+    {
+        "layer": "asset",
+        "range": sw.RANGE_CUSTOM,
+        "frame_range": (1001, 1005),
+        "version": 1,
+        "comment": "look",
+        "shot": "",
+    }
+)
+assert sw.hda_name_menu(lop) == []  # no USD layers yet
 sw.hda_new_version(lop)
 usd = Path(sw.hda_output(lop))
 assert usd.name == "hero_asset_v001.usd", usd
+assert sw.hda_range(lop) == (1001, 1005)
+usd.parent.mkdir(parents=True)
 usd.write_text("#usda 1.0\n", encoding="utf-8")
 sw.hda_post_render(lop)
 pointer = (hero.path / "publish/_usd/asset/asset.usd").read_text(encoding="utf-8")
 assert "@./v001/hero_asset_v001.usd@" in pointer, pointer
+assert sw.hda_name_menu(lop) == ["asset", "asset"]
+assert "Current  v001" in sw.hda_info(lop) and "Layer    asset" in sw.hda_info(lop), sw.hda_info(
+    lop
+)
+lop.parm("layer").set("lgt")
+sw.hda_name_changed(lop)
+assert lop.evalParm("version") == 1 and "Current  none" in sw.hda_info(lop), sw.hda_info(lop)
 
-render = node_with({"render_name": "beauty", "version": 0, "comment": "", "shot": ""})
+# render: always one file per frame, even for the current frame; menu without "render_"
+render = node_with({"render_name": "beauty", "range": 0, "version": 1, "comment": "", "shot": ""})
 assert sw.hda_output(render).endswith("media/render_beauty/v001/hero_render_beauty_v001.1001.exr")
+(hero.path / "media/render_beauty/v001").mkdir(parents=True)
+(hero.path / "media/playblast/v001").mkdir(parents=True)  # not a render: not in the menu
+assert sw.hda_name_menu(render) == ["beauty", "beauty"]
+assert "Media    render_beauty" in sw.hda_info(render), sw.hda_info(render)
+
+# an empty layer or render name refuses everything too
+for parms in ({"layer": ""}, {"render_name": ""}):
+    blank = node_with({**parms, "range": 0, "version": 1, "shot": ""})
+    for action in (sw.hda_output, sw.hda_new_version, sw.hda_execute, sw.hda_post_render):
+        try:
+            action(blank)
+            raise AssertionError(f"{action.__name__} accepted {parms}")
+        except sw.ScheinwerkError:
+            pass
 
 # --- a sequence scene publishing to shots -----------------------------------------
 seq_work = root / "shots/sq010/_seq/lgt/main/work"
@@ -128,8 +222,12 @@ except sw.ScheinwerkError:
 sw.set_shot("sq010_0020")
 assert "/shots/sq010/sq010_0020/publish/cam/" in sw.publish_path("cam", "abc")
 assert "/sq010_0010/" in sw.publish_path("cam", "abc", shot="sq010_0010")
-shot_node = node_with({"layer": "lgt", "version": 0, "comment": "", "shot": "sq010_0010"})
+shot_node = node_with({"layer": "lgt", "range": 0, "version": 1, "shot": "sq010_0010"})
 assert "/sq010_0010/publish/_usd/lgt/v001/sq010_0010_lgt_v001.usd" in sw.hda_output(shot_node)
+shot_sop = node_with({"product": "cam", "ext": "abc", "range": 1, "version": 1, "shot": ""})
+assert sw.hda_range(shot_sop) == (1011, 1020)  # the SW_SHOT option's shot (sq010_0020)
+shot_sop.parm("shot").set("sq010_0010")
+assert sw.hda_range(shot_sop) == (1001, 1010)
 fx = next_usd(project.entity("sq010_0020"), "fx")
 (fx / "sq010_0020_fx_v001.usd").write_text("#usda 1.0\n", encoding="utf-8")
 finalize(fx)
