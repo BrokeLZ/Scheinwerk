@@ -221,7 +221,8 @@ def test_copy_next_media_path(browser: Browser, show: Project, qapp) -> None:
     browser.set_view("media")
     browser.cols[0].select_key("turntable")
     trigger(actions.column_menu(browser, 1, None), "Copy next version path")
-    assert qapp.clipboard().text().endswith("turntable/v002/hero_turntable_v002")
+    expected = show.root / "assets/char/hero/media/turntable/v002/hero_turntable_v002"
+    assert qapp.clipboard().text() == str(expected)
 
 
 def test_copy_next_workfile_path(browser: Browser, show: Project, qapp) -> None:
