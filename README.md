@@ -9,7 +9,7 @@ A lightweight, file-based VFX pipeline for one artist on macOS and Windows.
 
 Any DCC works without a plugin: Scheinwerk hands out the next path and you save or export through the DCC's own dialog.
 
-> **Status:** Phases 1 (core) and 2 (`sw` CLI) are done: a project can be set up and used entirely through `sw`, see [the CLI guide](docs/usage.md#cli-sw). Phase 3 (the GUI) is next. Roadmap: [docs/spec.md §16](docs/spec.md#16-roadmap).
+> **Status:** Phases 1 (core), 2 (`sw` CLI) and 3 (GUI) are done: projects can be set up and used through `sw` or the browser (`sw gui`), see [the usage guide](docs/usage.md). Phase 4 (Houdini integration) is next. Roadmap: [docs/spec.md §16](docs/spec.md#16-roadmap).
 
 ## Documentation
 
