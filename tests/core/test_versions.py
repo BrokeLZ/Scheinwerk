@@ -220,3 +220,13 @@ def test_file_path(proj: Project, hero: Entity) -> None:
     shot = proj.create_shot("sq010_0010")
     render = Product(proj, shot.path / "media/render_beauty")
     assert render.file_path(1, "exr", 7).name == "sq010_0010_render_beauty_v001.0007.exr"
+
+
+def test_file_group_path_at(tmp_path) -> None:
+    files = [tmp_path / f"hero_sim_v002.{f}.bgeo.sc" for f in (1001, 1002, 1004)]
+    [group] = file_sequences(files)
+    assert group.path_at(1002) == tmp_path / "hero_sim_v002.1002.bgeo.sc"
+    assert group.path_at(1003) == tmp_path / "hero_sim_v002.1003.bgeo.sc"  # a gap: still the name
+    assert group.path_at(7) == tmp_path / "hero_sim_v002.0007.bgeo.sc"
+    [single] = file_sequences([tmp_path / "hero_pants_v002.abc"])
+    assert single.path_at(1001) == tmp_path / "hero_pants_v002.abc"  # not numbered: the file

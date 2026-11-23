@@ -26,7 +26,7 @@ from scheinwerk.core.errors import NotFound, ScheinwerkError
 from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import finalize
-from scheinwerk.core.templates import format_version, validate_name
+from scheinwerk.core.templates import format_version, parse_version, validate_name
 from scheinwerk.core.versions import Product, Version, file_sequences
 
 log = logging.getLogger("scheinwerk.houdini")
@@ -298,14 +298,28 @@ def layers_below(layer: str, shot: str | None = None) -> list[str]:
     ]
 
 
-# --- the three HDAs: sw_publish_sop, sw_publish_lop, sw_render ------------------------
+# --- the writing HDAs: sw_publish_sop, sw_publish_lop, sw_render ------------------------
 # Their parameters are described in docs/usage.md ("Building the HDAs"). The kind is told
-# apart by its name parm: product (SOP), layer (LOP) or render_name (render).
+# apart by its name parm: product (SOP), layer (LOP) or render_name (render). The two
+# publish HDAs have a `target` menu: publish (products, finalized) or cache (the scene's
+# task cache, <task>/cache/<name>/v###/, never finalized: caches are free-form, spec §4).
+
+TARGET_PUBLISH, TARGET_CACHE = 0, 1  # the publish HDAs' `target` menu
+
+
+def is_cache(node: hou.Node) -> bool:
+    """Whether a publish HDA writes into the task cache instead of publishing."""
+    return bool(node.parm("target")) and node.evalParm("target") == TARGET_CACHE
+
 
 RANGE_CURRENT, RANGE_SHOT, RANGE_CUSTOM = 0, 1, 2  # the HDAs' `range` menu
 
 
 def _node_entity(node: hou.Node) -> Entity:
+    """The entity a node writes for: caching, the scene's own (its task's cache); else
+    the scene's, or in a sequence scene the chosen shot."""
+    if is_cache(node):
+        return _task().entity
     shot = node.evalParm("shot") if node.parm("shot") else ""
     return target_entity(shot or None)
 
@@ -317,7 +331,7 @@ def _hda(node: hou.Node) -> tuple[Product, str, bool]:
     if node.parm("layer"):
         parm, kind, ext, frames = "layer", "layer", "usd", False
         name = node.evalParm("layer")
-        folder = entity.path / "publish" / "_usd"
+        folder = _task().cache_dir if is_cache(node) else entity.path / "publish" / "_usd"
     elif node.parm("render_name"):
         parm, kind, ext, frames = "render_name", "media", "exr", True
         name = node.evalParm("render_name") and f"render_{node.evalParm('render_name')}"
@@ -326,7 +340,7 @@ def _hda(node: hou.Node) -> tuple[Product, str, bool]:
         parm, kind, ext = "product", "product", node.evalParm("ext")
         name = node.evalParm("product")
         frames = node.evalParm("range") != RANGE_CURRENT
-        folder = entity.path / "publish"
+        folder = _task().cache_dir if is_cache(node) else entity.path / "publish"
     if not name.strip():
         raise ScheinwerkError(f"{node.path()}: set the {parm.replace('_', ' ')} first.")
     validate_name(kind, name)
@@ -364,7 +378,9 @@ def hda_name_menu(node: hou.Node) -> list[str]:
         entity = _node_entity(node)
     except ScheinwerkError:
         return []  # unsaved scene: a menu must not raise
-    if node.parm("layer"):
+    if is_cache(node):
+        names = [f.name for f in entity.project.scan(_task().cache_dir)]
+    elif node.parm("layer"):
         names = [p.name for p in entity.products(usd=True)]
     elif node.parm("render_name"):
         names = [m.name[7:] for m in entity.media() if m.name.startswith("render_")]
@@ -416,6 +432,40 @@ def hda_execute(node: hou.Node) -> None:
     _refresh_info(node)
 
 
+def publish_choose(node: hou.Node) -> None:
+    """Choose… button of the publish HDAs: pick an existing product (or USD layer) of an
+    entity this scene publishes to; sets the name (and in a sequence scene the shot) and
+    switches to its highest version. Typing a new name still works without it."""
+    from scheinwerk.gui.pick import pick
+
+    try:
+        project, ctx = _project_and_context()
+    except ScheinwerkError as exc:
+        _show(exc)
+        return
+    own = project.entity_at(ctx)
+    allowed = project.shots(own.name) if own.type == "sequence" else [own]
+    usd = node.parm("layer") is not None
+    name_parm = "layer" if usd else "product"
+    shot = node.evalParm("shot") if node.parm("shot") else ""
+    choice = pick(
+        current_file(),
+        usd,
+        entity=shot or ("" if own.type == "sequence" else own.name),
+        product=node.evalParm(name_parm),
+        parent=hou.qt.mainWindow() if hou.isUIAvailable() else None,
+        allowed=allowed,
+    )
+    if choice is None:
+        return
+    if node.parm("shot") and own.type == "sequence":
+        node.parm("shot").set(choice.entity.name)
+    if choice.product is not None:  # else: only the shot was chosen, keep the typed name
+        node.parm(name_parm).set(choice.product.name)
+    hda_name_changed(node)
+    _refresh_info(node)
+
+
 def _files(version: Version) -> str:
     files = version.files()
     text = f"{len(files)} file{'' if len(files) == 1 else 's'}"
@@ -434,7 +484,10 @@ def hda_info(node: hou.Node) -> str:
         number = hda_version(node)
     except ScheinwerkError as exc:
         return str(exc)
-    label = "Layer" if product.usd else "Media" if product.is_media else "Product"
+    if is_cache(node):
+        label = "Cache"
+    else:
+        label = "Layer" if product.usd else "Media" if product.is_media else "Product"
     action = node.parm("execute").parmTemplate().label() if node.parm("execute") else "Export"
     lines = [f"{label:<9}{product.name}  ({len(product.versions())} versions on disk)"]
     latest = product.latest()
@@ -474,7 +527,9 @@ def _refresh_info(node: hou.Node) -> None:
 
 def hda_post_render(node: hou.Node) -> None:
     """Post-render script of the inner ROP: finalize the version (version.json, and for a
-    USD layer the pointer and root layer)."""
+    USD layer the pointer and root layer). A cache is never finalized."""
+    if is_cache(node):
+        return
     product, ext, _ = _hda(node)
     version = hda_version(node)
     main = product.file_path(version, ext).name if ext == "usd" else None
@@ -485,6 +540,234 @@ def hda_post_render(node: hou.Node) -> None:
         main_file=main,
         dcc="houdini",
     )
+
+
+# --- the importing HDAs: sw_import_sop, sw_import_lop ---------------------------------
+# Parms: entity (empty = the scene's), product or layer, version (latest/current or a
+# v###), file (SOP) or mode + primpath (LOP). The inner File SOP / Sublayer / Reference
+# LOP read their path from the HDA's `path` parm (Python expression import_path).
+
+LATEST, CURRENT = "latest", "current"  # version menu: newest with files / the USD pointer
+MODE_AUTO, MODE_REFERENCE, MODE_SUBLAYER = 0, 1, 2  # sw_import_lop's `mode` menu
+
+
+def _import_entity(node: hou.Node) -> Entity:
+    project, ctx = _project_and_context()
+    name = node.evalParm("entity").strip()
+    return project.entity(name) if name else project.entity_at(ctx)
+
+
+def import_choose(node: hou.Node) -> None:
+    """Choose… button: pick entity, product (or USD layer) and version in the browser
+    (gui/pick.py) and write them into the node."""
+    from scheinwerk.gui.pick import pick
+
+    try:
+        project, ctx = _project_and_context()
+    except ScheinwerkError as exc:
+        _show(exc)
+        return
+    usd = node.parm("layer") is not None
+    name_parm = "layer" if usd else "product"
+    choice = pick(
+        current_file(),
+        usd,
+        entity=node.evalParm("entity"),
+        product=node.evalParm(name_parm),
+        version=node.evalParm("version"),
+        parent=hou.qt.mainWindow() if hou.isUIAvailable() else None,
+    )
+    if choice is None:
+        return
+    entity = choice.entity
+    if entity == project.entity_at(ctx):
+        key = ""  # the scene's own: stays right if the scene is copied to another entity
+    else:
+        key = f"seq:{entity.name}" if entity.type == "sequence" else entity.name
+    node.parm("entity").set(key)
+    node.parm(name_parm).set(choice.product.name if choice.product else "")
+    latest = CURRENT if usd else LATEST
+    node.parm("version").set(format_version(choice.version) if choice.version else latest)
+    if node.parm("file"):
+        node.parm("file").set("")
+    _refresh_info(node)
+
+
+def _import_product(node: hou.Node) -> Product:
+    entity = _import_entity(node)
+    name = node.evalParm("product").strip()
+    if not name:
+        raise ScheinwerkError(f"{node.path()}: choose a product first.")
+    product = Product(entity.project, entity.path / "publish" / name)
+    if not product.path.is_dir():
+        raise NotFound(f"{entity.name} has no product {name!r}.")
+    return product
+
+
+def _import_layer(node: hou.Node) -> tuple[Entity, Product | None]:
+    """(entity, layer); no layer = the entity's entry/root layer with every layer in it."""
+    entity = _import_entity(node)
+    name = node.evalParm("layer").strip()
+    if not name:
+        return entity, None
+    layer = Product(entity.project, entity.path / "publish" / "_usd" / name)
+    if not layer.path.is_dir():
+        raise NotFound(f"{entity.name} has no USD layer {name!r}.")
+    return entity, layer
+
+
+def _chosen_version(node: hou.Node, product: Product) -> Version:
+    """The node's version choice: latest = the newest version with files, or a v###."""
+    choice = node.evalParm("version").strip() or LATEST
+    if choice in (LATEST, CURRENT):
+        version = product.latest()
+        if version is None:
+            raise NotFound(f"{product.name} has no version with files yet.")
+        return version
+    number = parse_version(choice)
+    version = Version(product.project, product.path / format_version(number or 0))
+    if number is None or not version.path.is_dir():
+        raise NotFound(f"{product.name} has no version {choice!r}.")
+    return version
+
+
+def import_product_menu(node: hou.Node) -> list[str]:
+    """sw_import_sop: the chosen entity's products; sw_import_lop: its USD layers, with
+    the entry/root layer first."""
+    try:
+        entity = _import_entity(node)
+    except ScheinwerkError:
+        return []
+    if node.parm("layer"):
+        items = ["", f"(all layers: {entity.name}.usd)"]
+        return items + [i for p in entity.products(usd=True) for i in (p.name, p.name)]
+    return [i for p in entity.products(usd=False) for i in (p.name, p.name)]
+
+
+def import_version_menu(node: hou.Node) -> list[str]:
+    """latest (or for USD: current = the pointer's version), then every version."""
+    try:
+        if node.parm("layer"):
+            _, product = _import_layer(node)
+            first = [CURRENT, "current (the pointer)"]
+        else:
+            product = _import_product(node)
+            first = [LATEST, "latest"]
+    except ScheinwerkError:
+        return [LATEST, "latest"]
+    if product is None:
+        return [CURRENT, "current (the pointer)"]
+    items = list(first)
+    for v in product.versions():
+        comment = (v.info or {}).get("comment", "")
+        label = format_version(v.number) + (
+            " (empty)" if v.empty else f"  {comment}" if comment else ""
+        )
+        items += [format_version(v.number), label]
+    return items
+
+
+def import_file_menu(node: hou.Node) -> list[str]:
+    """sw_import_sop: the files of the chosen version (a numbered sequence is one entry)."""
+    try:
+        version = _chosen_version(node, _import_product(node))
+    except ScheinwerkError:
+        return []
+    return [i for g in file_sequences(version.files()) for i in (g.label, g.label)]
+
+
+def import_path(node: hou.Node) -> str:
+    """sw_import_sop: the file to load at the current frame (for the inner File SOP)."""
+    version = _chosen_version(node, _import_product(node))
+    groups = file_sequences(version.files())
+    if not groups:
+        raise NotFound(f"{version.path} is empty.")
+    choice = node.evalParm("file").strip()
+    group = next((g for g in groups if g.label == choice), groups[0])
+    return group.path_at(int(round(hou.frame()))).as_posix()
+
+
+def import_usd_path(node: hou.Node) -> str:
+    """sw_import_lop: the layer file: the entry/root layer, a layer's pointer (current) or
+    the main file of one version."""
+    entity, layer = _import_layer(node)
+    if layer is None:
+        path = entity.path / "publish" / "_usd" / f"{entity.name}.usd"
+    elif (node.evalParm("version").strip() or CURRENT) == CURRENT:
+        path = layer.pointer
+    else:
+        version = _chosen_version(node, layer)
+        path = layer.file_path(version.number, "usd")
+        if not path.is_file():  # not the recommended name: the version's only USD file
+            usd = [p for p in version.files() if p.suffix in (".usd", ".usda", ".usdc")]
+            path = usd[0] if len(usd) == 1 else path
+    if not path.is_file():
+        raise NotFound(f"{path} doesn't exist yet: publish the layer first.")
+    return path.as_posix()
+
+
+def import_mode(node: hou.Node) -> int:
+    """For the inner Switch LOP: 0 = sublayer, 1 = reference. Auto references an asset
+    (its entry layer has a defaultPrim) and sublayers a shot or sequence layer."""
+    mode = node.evalParm("mode")
+    if mode == MODE_AUTO:
+        try:
+            mode = MODE_REFERENCE if _import_entity(node).type == "asset" else MODE_SUBLAYER
+        except ScheinwerkError:
+            mode = MODE_SUBLAYER
+    return 1 if mode == MODE_REFERENCE else 0
+
+
+def import_prim(node: hou.Node) -> str:
+    """Default prim path for a reference: /<entity name>."""
+    try:
+        return f"/{_import_entity(node).name}"
+    except ScheinwerkError:
+        return "/import"
+
+
+def import_info(node: hou.Node) -> str:
+    """The Info box of an import HDA. Never raises: a parm expression must show text."""
+    try:
+        if node.parm("layer"):
+            path = Path(import_usd_path(node))
+            entity, layer = _import_layer(node)
+            mode = "reference" if import_mode(node) else "sublayer"
+            lines = [f"Entity   {entity.name} ({entity.type})", f"Mode     {mode}"]
+            if layer is None:
+                lines.append(f"Layer    all layers ({path.name})")
+            else:
+                current = layer.current()
+                shown = format_version(current.number) if current else "-"
+                lines.append(f"Layer    {layer.name}  current {shown}")
+            lines.append(f"File     {path.name}")
+            return "\n".join(lines)
+        product = _import_product(node)
+        version = _chosen_version(node, product)
+        info = version.info or {}
+        lines = [
+            f"Entity   {_import_entity(node).name}",
+            f"Product  {product.name}  {format_version(version.number)}"
+            f" of {len(product.versions())}",
+            f"File     {Path(import_path(node)).name}",
+        ]
+        if info.get("comment") or info.get("created"):
+            when = info.get("created", "")[:16].replace("T", " ")
+            lines.append(
+                "         "
+                + "  ".join(x for x in (when, info.get("user", ""), info.get("comment", "")) if x)
+            )
+        return "\n".join(lines)
+    except ScheinwerkError as exc:
+        return str(exc)
+
+
+def import_reload(node: hou.Node) -> None:
+    """Reload button: re-read the disk (a new latest version, re-exported files)."""
+    for child in node.children():
+        if child.parm("reload"):
+            child.parm("reload").pressButton()
+    _refresh_info(node)
 
 
 # --- adapter (spec §13.1) --------------------------------------------------------------

@@ -146,6 +146,14 @@ class FileGroup:
     def count(self) -> int:
         return len(self.paths)
 
+    def path_at(self, frame: int) -> Path:
+        """The file for `frame` (whether or not it exists); a single file is itself."""
+        if self.frames is None:
+            return self.paths[0]
+        digits = self.label.count("#")
+        name = self.label.replace("#" * digits, f"{frame:0{digits}d}")
+        return self.paths[0].parent / name
+
     @property
     def missing(self) -> int:
         return self.frames[1] - self.frames[0] + 1 - self.count if self.frames else 0

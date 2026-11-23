@@ -451,7 +451,7 @@ Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*
 
 All three work the same way:
 
-- **Name** (*Product*, *Layer* or *Render Name*): type a new name, or pick an existing one from the menu next to the field. Picking one switches *Version* to its newest version. While the name is empty, *New Version* and *Export*/*Render* are greyed out, and nothing can be written without one.
+- **Name** (*Product*, *Layer* or *Render Name*): type a new name, or pick an existing one from the menu next to the field, or with **Choose…** (on *Scheinwerk Publish* and *Publish USD*), which opens the browser as a picker. It only accepts this scene's asset or shot (in a sequence scene: one of its shots, which also sets *Shot*). To publish something new into a shot, choose just the shot and keep the name you typed. Picking one switches *Version* to its newest version. While the name is empty, *New Version* and *Export*/*Render* are greyed out, and nothing can be written without one.
 - **Frame Range**: *Current Frame*, *Shot Range* (the shot's range; an asset without a range uses the scene's) or *Custom Range*, which shows *Start/End*. Those follow the scene's range until you type your own numbers. What a range means per HDA:
   - *Scheinwerk Publish*: one file per frame; *Current Frame* writes one file without a frame number (`hero_box_v002.abc`). Default: *Shot Range*.
   - *Scheinwerk Publish USD*: always one `.usd`; a range writes the animation into it as time samples. Default: *Current Frame*.
@@ -471,17 +471,68 @@ All three work the same way:
 
 **Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range.
 
-**USD stack.** A department's scene loads the layers below it and publishes only its own. `sw.layers_below("lgt")` lists the existing pointer layers below lighting (fx, anim, layout, per `usd_layer_order`) as `$JOB/…` paths for a Sublayer LOP.
+**USD stack.** A department's scene loads the layers below it and publishes only its own. `sw.layers_below("lgt")` lists the existing pointer layers below lighting (fx, anim, layout, per `usd_layer_order`) as `$JOB/…` paths for a Sublayer LOP, or use *Scheinwerk Import USD* (below).
+
+### Caching
+
+Heavy in-between data (simulations, checkpoints you won't import on their own) shouldn't clutter your products. Both publish HDAs can write into the **scene's task cache folder** instead: set **Write To** to *Task cache*.
+
+```text
+assets/char/hero/fx/main/cache/sim/v003/hero_sim_v003.1001.bgeo.sc     (Scheinwerk Publish)
+assets/char/hero/fx/main/cache/look/v002/hero_look_v002.usd            (Scheinwerk Publish USD)
+```
+
+Everything else works the same (name, *Frame Range*, *Version* / *New Version*, *Export*, *Info*), except that the name menu lists this task's caches, *Shot* and *Comment* disappear, and nothing is finalized: no `version.json`, and a cached USD layer doesn't touch the layer pointers or the root layer (caches aren't published, spec §4). In a sequence scene it writes into the `_seq` task's cache. Exclude `cache/` from Synology sync (see [Sync](#sync-synology-drive)).
+
+**Load from Disk** (on both HDAs, for publishing and caching): tick it to output the version on disk instead of cooking the input, like Houdini's File Cache. Untick it to work live again.
+
+### Importing
+
+Both import HDAs start with **Choose…**: it opens the Scheinwerk browser as a picker, in its Products view. Select the asset or shot on the left, then the product (or USD layer; each picker only lists the kind its HDA can use), and press OK or double-click the product, a version or a file. The node's fields are filled in. *Always load the latest version* (for USD: *Use the layer's current version*) is on by default; untick it to pin the version you selected. The picker opens on what the node currently has.
+
+**Scheinwerk Import** (`sw_import_sop`, SOP) loads a published product:
+
+- *Entity*: empty means this scene's asset or shot (that's what Choose… writes for your own entity, so a copied scene keeps importing its own). You can also type a name (`seq:sq010` for a sequence).
+- *Product*: menu of that entity's products.
+- *Version*: `latest` (default: the newest version with files, so a new publish shows up after *Reload*) or a `v###` to pin one.
+- *File*: when a version holds several files or sequences, pick one (default: the first). Frame sequences follow the current frame.
+- *Reload* re-reads the disk; *Path* shows the file being loaded; *Info* the version, date, user and comment.
+
+It reads `.bgeo.sc`, `.vdb`, `.obj` and `.abc` (Alembic arrives as packed geometry; unpack it if you need the points).
+
+**Scheinwerk Import USD** (`sw_import_lop`, LOP, optional input) brings a USD layer into the stage:
+
+- *Entity*: as above.
+- *Layer*: empty means **all layers** of the entity (its entry/root layer `hero.usd`; in the picker: *All layers of the entity*), or one layer (`asset`, `lgt`, …).
+- *Version*: `current` (default: the layer's pointer, so *Set as current* and new publishes are followed) or a `v###` to pin one.
+- *Mode*: *Auto* references an asset (at *Primitive Path*, default `/hero`) and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (e.g. `/hero/geo`).
+
+When you save the result with *Scheinwerk Publish USD*, the *Use Relative Paths* processor turns these paths into relative ones.
 
 ### Building the HDAs
 
-The HDAs are already in the repo. This section describes what is inside them, for changing or rebuilding one. `uv run pytest -m houdini` exports with all three, so run it after any change. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
+The HDAs are already in the repo. This section describes what is inside them, for changing or rebuilding one. `uv run pytest -m houdini` uses all five, so run it after any change.
+
+**Publish and import HDAs** (`sw_publish_sop`, `sw_publish_lop`, `sw_import_sop`, `sw_import_lop`) are built by a script, from ordinary nodes, so you can still open and change them by hand:
+
+```bash
+hython integrations/houdini/build_hdas.py                   # all four
+hython integrations/houdini/build_hdas.py sw_publish_sop    # just one
+```
+
+(`hython` is in Houdini's `bin` folder.) It saves `.hdalc` with Indie, `.hdanc` with Apprentice, `.hda` otherwise. **Running it again rebuilds from scratch and replaces hand edits**, so after editing one by hand, either keep doing that or move the change into the script. Inside:
+- *Scheinwerk Publish*: the input → a ROP Geometry Output `export` (set up as described below) and a Switch `load_from_disk` (input 0 = the input, input 1 = a File SOP `load` reading `chs("../output")`, switched by `ch("../load")`) → Null `OUT`.
+- *Scheinwerk Publish USD*: the same with a USD ROP `export` and a Sublayer LOP `load` → `output0`.
+- *Scheinwerk Import*: a File SOP `load` reading `chs("../path")` → Null `OUT`.
+- *Scheinwerk Import USD*: the input → a Sublayer LOP and a Reference LOP (both `filepath1` = `chs("../path")`, the reference's `primpath1` = `chs("../primpath")`) → a Switch `mode` (`SW.import_mode(hou.pwd().parent())`: 0 sublayer, 1 reference) → `output0`.
+
+**Scheinwerk Render** (`sw_render`) is built by hand, as follows; the publish HDAs follow the same pattern (plus `target` and `load`), so this also explains them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
 
 Houdini keeps copies of earlier saves in `otls/backup/`. Git ignores that folder.
 
 Below, `import sw` stands for `import scheinwerk.dcc.houdini as sw`, and `SW` for the one-line expression form `__import__("scheinwerk.dcc.houdini", fromlist=["x"])`.
 
-**Parameters on all three**, in this order:
+**Parameters on the three publish/render HDAs**, in this order:
 
 | Name | Type | Setup |
 | --- | --- | --- |

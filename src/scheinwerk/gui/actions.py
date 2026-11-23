@@ -340,7 +340,12 @@ def _group_menu(b: Browser, menu: QMenu, data: object) -> None:
 
 
 def activate(b: Browser, i: int, data: object) -> None:
-    """Double-click: open a workfile or file, reveal a version (spec §12.2)."""
+    """Double-click: open a workfile or file, reveal a version (spec §12.2). While picking
+    (gui/pick.py), a double-clicked product, version or file is the choice."""
+    if getattr(b, "picking", False):
+        if isinstance(data, (Product, Version, FileGroup)):
+            b.picked.emit()
+        return
     if isinstance(data, Workfile):
         _open(b, data.path, data.ext)
     elif isinstance(data, Path):

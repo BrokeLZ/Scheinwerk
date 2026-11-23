@@ -15,6 +15,7 @@ QWidget {
 }
 
 QLabel { color: #3b2314; background: transparent; }
+QCheckBox { color: #3b2314; background: transparent; }
 
 /* --- top bar ---------------------------------------------------------- */
 
@@ -62,13 +63,19 @@ QFrame#columnFrame { background: #e8650a; padding: 8px; }
 
 QTreeWidget {
     background: #efc3a6;
+    alternate-background-color: #efc3a6;
     color: #3b2314;
     border: none;
     outline: none;
 }
+/* Rows and the branch area (arrows, indentation) in every state, with opaque colours: a
+   host such as Houdini styles item views application-wide and its Qt style paints rows
+   itself wherever ours says "transparent". Only our own explicit rules override that. */
+QTreeWidget::item, QTreeWidget::branch { background: #efc3a6; }
 QTreeWidget::item { padding: 3px 4px; }
-QTreeWidget::item:selected { background: #a8380a; color: #fbe3d3; }
-QTreeWidget::item:hover:!selected { background: #f6d6c1; }
+QTreeWidget::item:hover:!selected, QTreeWidget::branch:hover:!selected { background: #f6d6c1; }
+QTreeWidget::item:selected, QTreeWidget::branch:selected { background: #a8380a; color: #fbe3d3; }
+QTreeWidget::item:selected:hover, QTreeWidget::branch:selected:hover { background: #b9430f; }
 
 QLineEdit#filter {
     background: #fbe3d3;

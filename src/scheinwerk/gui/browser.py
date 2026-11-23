@@ -7,9 +7,10 @@ Every column is filled from one core call; selections are remembered per view.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -50,6 +51,8 @@ def _frames(frames: tuple[int, int] | None) -> str:
 
 
 class Browser(QWidget):
+    picked = Signal()  # double-click while picking (see gui/pick.py)
+
     def __init__(self, path: Path | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("browser")
@@ -62,6 +65,7 @@ class Browser(QWidget):
         self.mode = "assets"
         self.entity_key: str | None = None
         self.memory: dict[str, list[str | None]] = {v: [None, None, None] for v in VIEWS}
+        self.product_filter: Callable[[Product], bool] | None = None
         self._last_reload = 0.0
         self._watched: QObject | None = None
         self._build()
@@ -216,6 +220,19 @@ class Browser(QWidget):
         for button in self.mode_buttons.buttons():
             button.setChecked(button.property("mode") == self.mode)
 
+    def preselect(
+        self, entity: Entity | None, product_key: str | None, version_key: str | None
+    ) -> None:
+        """Select an entity (switching Assets/Shots), then remembered product/version keys."""
+        if entity is not None:
+            prefix = {"asset": "asset", "shot": "shot", "sequence": "seq"}[entity.type]
+            self.entity_key = f"{prefix}:{entity.name}"
+            self.mode = "assets" if entity.type == "asset" else "shots"
+            for button in self.mode_buttons.buttons():
+                button.setChecked(button.property("mode") == self.mode)
+        self.memory[self.view][:2] = [product_key, version_key]
+        self.reload()
+
     def set_project(self, root: Path | None) -> None:
         self.project = Project.find(root) if root else None
         if self.project is not None:
@@ -349,6 +366,8 @@ class Browser(QWidget):
             return rows
         if i == 0:
             products = entity.products() if self.view == "products" else entity.media()
+            if self.product_filter is not None:  # the picker shows one kind only
+                products = [p for p in products if self.product_filter(p)]
             rows = [self._product_row(p) for p in products]
             layers = [r for r, p in zip(rows, products, strict=True) if p.usd]
             others = [r for r, p in zip(rows, products, strict=True) if not p.usd]
