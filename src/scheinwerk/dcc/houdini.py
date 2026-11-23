@@ -166,7 +166,8 @@ def save_next_version() -> Path:
     task = _task()
     suffix = current_file().suffix.lstrip(".")
     path = task.next_workfile(suffix if suffix in EXTENSIONS else "hip")
-    hou.hipFile.save(str(path))
+    # "/" on every OS: Houdini pastes the path unescaped into event scripts' kwargs
+    hou.hipFile.save(path.as_posix())
     run_hook("post_save", path=path, context=Context.from_path(path))
     return path
 
@@ -364,10 +365,10 @@ class HoudiniAdapter:
         return current_file()
 
     def open(self, path: Path) -> None:
-        hou.hipFile.load(str(path))
+        hou.hipFile.load(path.as_posix())
 
     def save_as(self, path: Path) -> None:
-        hou.hipFile.save(str(path))
+        hou.hipFile.save(path.as_posix())
 
     def main_window(self):
         return hou.qt.mainWindow()
