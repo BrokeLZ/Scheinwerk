@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from scheinwerk.core import install
 from tests.conftest import touch
 
 
@@ -354,6 +355,8 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         prefs = home / "houdini21.0"
     prefs.mkdir(parents=True)
     monkeypatch.setattr(Path, "home", lambda: home)
+    # on Windows the real Documents folder comes from the registry: keep it out of the test
+    monkeypatch.setattr(install, "documents_dir", lambda h=None: (h or home) / "Documents")
     return prefs
 
 

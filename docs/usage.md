@@ -410,7 +410,7 @@ Start Houdini once (so it has a preferences folder), quit it, then in the Schein
 uv run sw install houdini
 ```
 
-This writes `packages/scheinwerk.json` into the preferences of every Houdini version you have (on macOS `~/Library/Preferences/houdini/21.0/packages/`), pointing at this checkout. Restart Houdini. If you move the repo, run it again. To remove it: `uv run sw uninstall houdini`. A `scheinwerk.json` you wrote yourself is never touched.
+This writes `packages/scheinwerk.json` into the preferences of every Houdini version you have (on macOS `~/Library/Preferences/houdini/21.0/packages/`, on Windows `houdini21.0\packages\` in your Documents folder, also if you moved it to another drive), pointing at this checkout. Restart Houdini. If you move the repo, run it again. To remove it: `uv run sw uninstall houdini`. A `scheinwerk.json` you wrote yourself is never touched.
 
 ### What you get
 

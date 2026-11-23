@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from scheinwerk.core.errors import AlreadyExists, NotFound
-from scheinwerk.core.install import houdini_pref_dirs, install_houdini, uninstall_houdini
+from scheinwerk.core.install import (
+    documents_dir,
+    houdini_pref_dirs,
+    install_houdini,
+    uninstall_houdini,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -31,6 +38,19 @@ def test_pref_dirs_per_os(mac_home: Path, tmp_path: Path) -> None:
     linux = tmp_path / "linux"
     (linux / "houdini22.0").mkdir(parents=True)
     assert houdini_pref_dirs(linux, "linux") == [linux / "houdini22.0"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
+def test_windows_documents_follows_a_moved_folder() -> None:
+    # Documents can be moved (e.g. to D:\you\Dokumente); Houdini follows it, so must we.
+    # The shell's own answer (CSIDL_PERSONAL) is the reference.
+    buffer = ctypes.create_unicode_buffer(260)
+    ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buffer)
+    assert documents_dir() == Path(buffer.value)
+
+
+def test_documents_under_an_explicit_home(tmp_path: Path) -> None:
+    assert documents_dir(tmp_path) == tmp_path / "Documents"
 
 
 def test_install_writes_one_package_per_version(mac_home: Path) -> None:

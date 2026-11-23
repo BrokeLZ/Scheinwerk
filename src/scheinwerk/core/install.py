@@ -5,6 +5,7 @@ Writes only into Houdini's machine-local preferences, never into a project.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -17,13 +18,32 @@ TEMPLATE = Path("integrations") / "houdini" / PACKAGE
 MARKER = "SCHEINWERK"  # the package's env variable: a file that sets it is ours
 
 
+def documents_dir(home: Path | None = None) -> Path:
+    """The Windows Documents folder: `home`/Documents when `home` is given, else the one
+    registered for the user, which can be moved (e.g. to D:\\you\\Dokumente) and which
+    Houdini follows. Falls back to ~/Documents."""
+    if home is None and sys.platform == "win32":
+        import winreg
+
+        key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
+                value, _ = winreg.QueryValueEx(handle, "Personal")
+            return Path(os.path.expandvars(value))  # may be "%USERPROFILE%\Documents"
+        except OSError:
+            pass
+    return (home or Path.home()) / "Documents"
+
+
 def houdini_pref_dirs(home: Path | None = None, platform: str = sys.platform) -> list[Path]:
     """Houdini's per-version preference folders that exist (Houdini makes them on first start)."""
-    home = home or Path.home()
-    if platform == "darwin":
+    if platform == "win32":
+        base, pattern = documents_dir(home), r"houdini[0-9]+\.[0-9]+"
+    elif platform == "darwin":
+        home = home or Path.home()
         base, pattern = home / "Library" / "Preferences" / "houdini", r"[0-9]+\.[0-9]+"
     else:
-        base = home / "Documents" if platform == "win32" else home
+        base = home or Path.home()
         pattern = r"houdini[0-9]+\.[0-9]+"
     if not base.is_dir():
         return []
