@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -337,3 +338,37 @@ def test_next_publish_file(sw, hero: Path) -> None:
     assert r.out == "assets/hero/media/turntable/v004/hero_turntable_v004\n"
     r = sw("next-usd", "hero", "asset", "--file", "--relative")
     assert r.out == "assets/hero/publish/_usd/asset/v003/hero_asset_v003\n"
+
+
+# --- install ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    if sys.platform == "darwin":
+        prefs = home / "Library/Preferences/houdini/21.0"
+    elif sys.platform == "win32":
+        prefs = home / "Documents/houdini21.0"
+    else:
+        prefs = home / "houdini21.0"
+    prefs.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    return prefs
+
+
+def test_install_and_uninstall_houdini(sw, fake_home: Path) -> None:
+    package = fake_home / "packages/scheinwerk.json"
+    r = sw("install", "houdini")
+    assert (r.code, r.out) == (0, f"{package}\n")
+    repo = Path(__file__).resolve().parents[2]
+    assert (
+        json.loads(package.read_text(encoding="utf-8"))["env"][0]["SCHEINWERK"] == repo.as_posix()
+    )
+    assert sw("uninstall", "houdini").out == f"{package}\n"
+    assert not package.exists()
+    assert sw("uninstall", "houdini").out == "Nothing to remove.\n"
+
+
+def test_install_unknown_dcc(sw) -> None:
+    assert sw("install", "maya").code == 2

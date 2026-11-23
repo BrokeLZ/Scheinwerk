@@ -6,6 +6,23 @@ from dataclasses import replace
 
 from scheinwerk.core.context import Context
 
+ENV_VARS = (
+    "SW_ROOT",
+    "SW_ENTITY_TYPE",
+    "SW_ENTITY",
+    "SW_SEQ",
+    "SW_DEPT",
+    "SW_TASK",
+    "SW_TASK_DIR",
+    "SW_CACHE",
+    "SW_ENTITY_DIR",
+)
+
+
+def cleared_env() -> dict[str, str]:
+    """Every variable set to "": for a scene outside any project."""
+    return dict.fromkeys(ENV_VARS, "")
+
 
 def env_for(context: Context) -> dict[str, str]:
     """Every §7.2 variable except Houdini's JOB. Keys that don't apply are "".

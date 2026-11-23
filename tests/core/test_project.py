@@ -372,3 +372,18 @@ def test_next_shot_name_runs_out(proj: Project) -> None:
     (proj.root / "shots/sq010/sq010_9990").mkdir(parents=True)
     with pytest.raises(ScheinwerkError, match="sq010"):
         proj.next_shot_name("sq010")
+
+
+# --- entity for a context (DCC integrations) --------------------------------------
+
+
+def test_entity_at(proj: Project) -> None:
+    from scheinwerk.core.context import Context
+
+    hero = proj.create_asset("hero", category="char")
+    shot = proj.create_shot("sq010_0010")
+    work = Context.from_path(hero.path / "mdl/main/work/hero_mdl_main_v001.hip")
+    assert proj.entity_at(work) == hero
+    assert proj.entity_at(Context.from_path(shot.path / "lgt/main")) == shot
+    seq = proj.entity_at(Context.from_path(proj.root / "shots/sq010/_seq/lgt/main/work"))
+    assert (seq.type, seq.name, seq.path) == ("sequence", "sq010", proj.root / "shots/sq010/_seq")

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- Scheinwerk shelf (spec §13.2.3) -->
+  <toolshelf name="scheinwerk" label="Scheinwerk">
+    <memberTool name="scheinwerk_save_next_version"/>
+    <memberTool name="scheinwerk_open_browser"/>
+    <memberTool name="scheinwerk_copy_context_path"/>
+  </toolshelf>
+
+  <tool name="scheinwerk_save_next_version" label="Save Next" icon="BUTTONS_save">
+    <script scriptType="python"><![CDATA[import scheinwerk.dcc.houdini as sw
+sw.ui_save_next_version()]]></script>
+  </tool>
+
+  <tool name="scheinwerk_open_browser" label="Browser" icon="BUTTONS_folder">
+    <script scriptType="python"><![CDATA[import scheinwerk.dcc.houdini as sw
+sw.ui_open_browser()]]></script>
+  </tool>
+
+  <tool name="scheinwerk_copy_context_path" label="Copy Path" icon="BUTTONS_copy">
+    <script scriptType="python"><![CDATA[import scheinwerk.dcc.houdini as sw
+sw.ui_copy_context_path()]]></script>
+  </tool>
+</shelfDocument>

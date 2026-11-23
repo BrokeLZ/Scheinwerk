@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING
 from scheinwerk.core.context import Context
 from scheinwerk.core.errors import InvalidName
 from scheinwerk.core.fileio import read_json
-from scheinwerk.core.templates import format_product_stem, parse_version, validate_name
+from scheinwerk.core.templates import (
+    format_product_file,
+    format_product_stem,
+    format_version,
+    parse_version,
+    validate_name,
+)
 from scheinwerk.core.usd_pointer import read_pointer
 
 if TYPE_CHECKING:
@@ -96,6 +102,17 @@ class Product:
         return (
             Version(self.project, self.path / folder) if parse_version(folder) is not None else None
         )
+
+    def highest(self) -> int | None:
+        """The highest v### number, empty folders included: the version a DCC node writes
+        to until a new one is made (spec §13.2)."""
+        return max((v.number for v in self.versions()), default=None)
+
+    def file_path(self, version: int, ext: str, frame: int | None = None) -> Path:
+        """`…/v002/hero_pants_v002[.1001].ext`, whether or not it exists."""
+        entity = Context.from_path(self.path).entity
+        name = format_product_file(entity, self.name, version, ext, frame)
+        return self.path / format_version(version) / name
 
     def next_version_path(self) -> Path:
         """Create the next v### folder and return the file path in it without extension:

@@ -33,3 +33,5 @@ known-first-party = ["scheinwerk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["houdini: runs inside real Houdini (hython); slow, run with -m houdini"]
+addopts = "-m 'not houdini'"

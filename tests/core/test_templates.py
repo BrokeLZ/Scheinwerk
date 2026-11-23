@@ -9,6 +9,7 @@ import pytest
 
 from scheinwerk.core.errors import InvalidName, ScheinwerkError
 from scheinwerk.core.templates import (
+    format_product_file,
     format_product_stem,
     format_version,
     format_workfile,
@@ -314,3 +315,22 @@ def test_parse_resolution(text: str, res: tuple[int, int]) -> None:
 def test_parse_resolution_rejects(text: str) -> None:
     with pytest.raises(InvalidName):
         parse_resolution(text)
+
+
+@pytest.mark.parametrize(
+    ("args", "name"),
+    [
+        (("hero", "base_model", 2, "abc"), "hero_base_model_v002.abc"),
+        (("hero", "fx_sim", 12, "bgeo.sc", 1001), "hero_fx_sim_v012.1001.bgeo.sc"),
+        (("sq010_0010", "render_beauty", 4, "exr", 7), "sq010_0010_render_beauty_v004.0007.exr"),
+        (("hero", "asset", 1000, "usd"), "hero_asset_v1000.usd"),
+    ],
+)
+def test_format_product_file(args: tuple, name: str) -> None:
+    assert format_product_file(*args) == name
+
+
+@pytest.mark.parametrize("ext", ["", ".abc", "ABC", "bgeo..sc", "a/b"])
+def test_format_product_file_rejects_extension(ext: str) -> None:
+    with pytest.raises(InvalidName):
+        format_product_file("hero", "base_model", 1, ext)

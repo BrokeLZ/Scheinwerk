@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from scheinwerk.core.context import Context
 from scheinwerk.core.entities import Entity, check_frames
 from scheinwerk.core.errors import (
     AlreadyExists,
@@ -187,6 +188,10 @@ class Project:
             for f in self.scan(self.root / "shots" / s)
             if f.name != "_seq"
         ]
+
+    def entity_at(self, context: Context) -> Entity:
+        """The entity a context (an open file's path) belongs to."""
+        return Entity(self, context.entity_type, context.entity, context.category, context.sequence)
 
     def entity(self, name: str) -> Entity:
         """Resolve a unique name; `asset:`, `shot:` or `seq:` picks the type (spec §11)."""

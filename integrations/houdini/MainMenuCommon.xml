@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Scheinwerk main menu (spec §13.2.3). Loaded from HOUDINI_PATH by the package. -->
+<mainMenu>
+  <menuBar>
+    <subMenu id="scheinwerk_menu">
+      <label>Scheinwerk</label>
+      <insertBefore>help_menu</insertBefore>
+      <scriptItem id="scheinwerk_save_next_version">
+        <label>Save Next Version</label>
+        <scriptCode><![CDATA[import scheinwerk.dcc.houdini as sw; sw.ui_save_next_version()]]></scriptCode>
+      </scriptItem>
+      <scriptItem id="scheinwerk_open_browser">
+        <label>Open Scheinwerk Browser</label>
+        <scriptCode><![CDATA[import scheinwerk.dcc.houdini as sw; sw.ui_open_browser()]]></scriptCode>
+      </scriptItem>
+      <scriptItem id="scheinwerk_copy_context_path">
+        <label>Copy Context Path</label>
+        <scriptCode><![CDATA[import scheinwerk.dcc.houdini as sw; sw.ui_copy_context_path()]]></scriptCode>
+      </scriptItem>
+    </subMenu>
+  </menuBar>
+</mainMenu>

@@ -415,6 +415,7 @@ format_version(n) -> str / parse_version(text) -> int | None
 format_workfile(entity, dept, task, version, ext=None) -> str   # no ext: hero_mdl_main_v003
 parse_workfile(filename, entity, dept, task) -> tuple[int, str] | None   # None = unmanaged
 format_product_stem(entity, product, version) -> str     # hero_base_model_v002
+format_product_file(entity, product, version, ext, frame=None) -> str   # hero_pants_v002.1001.bgeo.sc
 
 # fileio.py
 write_text(path, text) / write_json(path, data)  # atomic, LF, skips identical content
@@ -445,6 +446,7 @@ project.next_shot_name(seq) -> str          # sq010_0040
 project.create_asset(name, category=None) -> Entity  # names unique project-wide, case-insensitive
 project.create_sequence(name) -> Entity
 project.create_shot(name, frames=None) -> Entity     # creates the sequence if needed
+project.entity_at(context) -> Entity        # the entity a context belongs to
 project.rel(path) -> str                    # root-relative POSIX
 project.abs(rel) -> Path
 
@@ -477,6 +479,8 @@ Workfile: .path .version .ext
 # versions.py
 Product(project, path): .name .usd .is_media .kind .valid .pointer .versions() .latest() .current() .next_version_dir() -> Path
     .next_version_path() -> Path   # creates the next v### folder, returns …/v002/hero_base_model_v002
+    .highest() -> int | None       # highest v###, empty ones included
+    .file_path(version, ext, frame=None) -> Path   # …/v002/hero_pants_v002[.1001].ext
 Version(project, path): .number .path .info -> dict | None .files() .empty
 file_sequences(paths) -> list[FileGroup]    # FileGroup: .label ("name.####.exr") .paths .frames .count .missing
 
@@ -490,6 +494,11 @@ ingest(files, target) -> list[Path]
 
 # env.py
 env_for(context) -> dict[str, str]
+ENV_VARS / cleared_env() -> dict[str, str]   # every SW_* variable set to ""
+
+# install.py  (machine-local Houdini preferences, §13.2.1)
+houdini_pref_dirs() -> list[Path] / package_data(repo) -> dict
+install_houdini(repo) -> list[Path] / uninstall_houdini() -> list[Path]
 
 # hooks.py
 run_hook(name, **kwargs) -> None            # see §14
@@ -542,6 +551,8 @@ sw ingest <files...> <entity> (<dept>[/<task>] | --product N | --media N)
 sw context [path]                           # parse and print context (default: cwd)
 sw env [path] [--shell zsh|bash|pwsh]
 sw doctor                                   # report only, see below
+sw install houdini                          # write the Houdini package file (§13.2.1)
+sw uninstall houdini                        # remove what `sw install` wrote
 sw gui [path]                               # Phase 3
 ```
 
@@ -647,16 +658,24 @@ Integrations are installed persistently (no launcher needed). On every file open
 
 ### 13.2 Houdini 21 (key integration)
 
-1. **Package** `integrations/houdini/scheinwerk.json` → adds the repo to `PYTHONPATH` and `HOUDINI_PATH` (toolbar, otls, python3.11libs).
-2. **Scene callbacks** (`hou.hipFile.addEventCallback`): on load / after save-as → set env + `$JOB`. If the frame range differs from `entity.json`, ask before applying it.
-3. **Menu + shelf:** Save next version (Ctrl+Alt+S), Open Scheinwerk browser (docked Python panel), Copy context path.
-4. **Expression helpers** (`import scheinwerk.dcc.houdini as sw`): `sw.cache(name)`, `sw.publish_path(product, ext)`, `sw.usd_path(layer)`, `sw.media_path(name, ext)`, `sw.shots()` (shots of the current sequence with frame ranges).
-5. **HDAs (two only):**
-   - `sw_publish_lop`: USD ROP with the *Use Relative Paths* output processor. Writes to `next_usd`, calls `finalize` post-render. Parms: layer name, comment, target shot (sequence context).
-   - `sw_publish_sop`: file cache writing to `next_publish`, finalize post-render. Parms: product name, comment, target shot (sequence context).
-6. **Render output:** Karma/husk to `media/render_<name>/v###/` with an independent counter. Source hip in `version.json`.
-7. **Sequence workfiles:** a hip in `_seq/` exposes `sw.shots()` and a shot menu (context options) in Solaris. Every publish/render from it targets one specific shot and lands in **that shot's** `publish/` / `media/`.
-8. **USD stack convention:** a department's hip loads the pointer layers below it in `usd_layer_order` and publishes only its own layer.
+Target Houdini 21 (Python 3.11, PySide6 6.5); everything is also checked in Houdini 22 (Python 3.13, PySide6 6.8). Code: `scheinwerk/dcc/houdini.py`; startup files: `integrations/houdini/`.
+
+1. **Package** `integrations/houdini/scheinwerk.json` sets `SCHEINWERK` (the checkout), prepends `$SCHEINWERK/src` to `PYTHONPATH` and adds `$SCHEINWERK/integrations/houdini` to `HOUDINI_PATH` (`python3.11libs/` and `python3.13libs/` with the same `pythonrc.py`, `MainMenuCommon.xml`, `toolbar/`, `python_panels/`, `otls/`). `sw install houdini` (`core/install.py`) writes it, with the checkout's absolute path, into `packages/` of every Houdini preferences folder that exists (macOS `~/Library/Preferences/houdini/<X.Y>/`, Windows `~/Documents/houdini<X.Y>/`, Linux `~/houdini<X.Y>/`). It is machine-local, so the absolute path is allowed (§2.4). A `scheinwerk.json` that doesn't set `SCHEINWERK` was not written by Scheinwerk: install refuses (writing nothing) and uninstall skips it.
+2. **Scene callbacks** (`hou.hipFile.addEventCallback`, registered by `pythonrc.py`): after load and after every save → set the §7.2 variables and `$JOB` (= `SW_ROOT`) with `hou.putenv` **and** `os.environ` (so Python code and child processes such as husk see them too); after *File → New* → clear them. On load, and on a save that moves the scene to another entity, if the entity's frame range differs from the scene's, ask before applying it (only with a UI; headless sessions never change it). Callback errors are logged, never raised.
+3. **Menu + shelf + panel:** a *Scheinwerk* main menu and shelf with *Save Next Version*, *Open Scheinwerk Browser* (the §12 browser as a Python panel `scheinwerk`, dockable from the pane-tab menu), *Copy Context Path* (the scene's root-relative path). *Save Next Version* needs a scene saved in a task's `work/`, keeps the extension (`.hip`, `.hipnc`, `.hiplc`) and runs the `post_save` hook. The spec's Ctrl+Alt+S is assigned by the user in the Hotkey Manager (Houdini's hotkey API is not available to verify headless).
+4. **Expression helpers** (`import scheinwerk.dcc.houdini as sw`, Python parameter expressions; they return absolute runtime paths, never stored):
+   - `sw.cache(name)` → `<task>/cache/<name>` (free-form).
+   - `sw.publish_path(product, ext, version=None, frames=False, shot=None)`, `sw.usd_path(layer, version=None, shot=None)`, `sw.media_path(name, ext, version=None, frames=True, shot=None)` → the recommended file (§5.3) in `version`, default the **highest existing** version (v001 if none). `frames` adds the evaluated frame (`.1001`).
+   - `sw.shots()` → `[(shot, frames), …]` of the scene's sequence; `sw.shot_menu()` for menu parms; `sw.set_shot(name)`; `sw.layers_below(layer, shot=None)` (item 8).
+5. **Versioning on nodes:** a node writes into a fixed version until the user clicks *New version*, which reserves the next `v###` (`next_version_dir`) and sets the node's `version` parm. `version` 0 means the highest existing version. Exporting again overwrites that version's files and finalizes it again.
+6. **HDAs (three, built by hand in Houdini; see the usage guide):**
+   - `sw_publish_sop`: SOP, wraps a ROP Geometry Output → `publish/<product>/v###/`. Parms: `product`, `ext` (bgeo.sc, vdb, abc, obj), `frames` (one file per frame).
+   - `sw_publish_lop`: LOP, wraps a USD ROP with the *Use Relative Paths* output processor (on by default) → `publish/_usd/<layer>/v###/{entity}_{layer}_v###.usd`. Parm: `layer`.
+   - `sw_render`: LOP, wraps a USD Render ROP (Karma) → `media/render_<name>/v###/` with its own counter, one `.exr` per frame. Parm: `render_name`.
+   - Common parms: `version`, `new_version` (button), `shot` (sequence scenes), `comment`, `output` (the path, Python expression `hda_output`), `execute` (button). The inner ROP's path is `chs("../output")` and its post-render script calls `hda_post_render`, which finalizes the version with `source` = the scene (`version.json`; for USD also the pointer and root layer). The code tells the kinds apart by the `product` / `layer` / `render_name` parm.
+7. **Sequence scenes:** in a scene under `_seq/`, publishes and renders target one shot: the node's `shot` parm, else the context option `SW_SHOT` (`sw.set_shot`, or *Edit → Context Options*). Without a shot they raise an error. Output lands in **that shot's** `publish/` / `media/`.
+8. **USD stack convention:** a department's scene loads the pointer layers below its own in `usd_layer_order` and publishes only its own layer. `sw.layers_below(layer)` returns the existing ones, strongest first, as `$JOB/…` paths for a Sublayer LOP (stored env-relative, §7.1).
+9. **Tests:** `tests/houdini/` runs the integration inside every installed hython (`uv run pytest -m houdini`), loading the package from a temporary `HOUDINI_PACKAGE_DIR`. UI-only parts (menu, shelf, panel, dialogs, clipboard) are checked by hand.
 
 ### 13.3 Nuke (current)
 
@@ -704,12 +723,13 @@ scheinwerk/
 ├── src/scheinwerk/
 │   ├── core/  templates.py project.py context.py entities.py versions.py
 │   │          publish.py env.py hooks.py usd_pointer.py fileio.py doctor.py
-│   │          settings.py system.py errors.py
+│   │          settings.py system.py install.py errors.py
 │   ├── cli.py
 │   ├── gui/   app.py browser.py columns.py actions.py dialogs.py theme.qss __main__.py
 │   └── dcc/   base.py houdini.py nuke.py blender.py
 ├── integrations/
-│   ├── houdini/  scheinwerk.json  python3.11libs/  toolbar/  otls/
+│   ├── houdini/  scheinwerk.json  python3.11libs/  python3.13libs/  MainMenuCommon.xml
+│   │             toolbar/  python_panels/  otls/
 │   ├── nuke/     init.py menu.py
 │   └── blender/  scheinwerk_ext/
 └── tests/

@@ -198,3 +198,25 @@ def test_next_version_path_invalid_name_creates_nothing(proj: Project, hero: Ent
     with pytest.raises(InvalidName):
         product.next_version_path()
     assert not product.path.exists()
+
+
+# --- working version and file paths (DCC exports, spec §13.2) ---------------------
+
+
+def test_highest(proj: Project, hero: Entity) -> None:
+    product = Product(proj, hero.path / "publish/pants")
+    assert product.highest() is None
+    touch(product.path / "v001/x.abc")
+    (product.path / "v003").mkdir()  # empty still counts: it was reserved
+    assert product.highest() == 3
+
+
+def test_file_path(proj: Project, hero: Entity) -> None:
+    product = Product(proj, hero.path / "publish/pants")
+    assert product.file_path(2, "abc") == product.path / "v002/hero_pants_v002.abc"
+    assert (
+        product.file_path(2, "bgeo.sc", 1001) == product.path / "v002/hero_pants_v002.1001.bgeo.sc"
+    )
+    shot = proj.create_shot("sq010_0010")
+    render = Product(proj, shot.path / "media/render_beauty")
+    assert render.file_path(1, "exr", 7).name == "sq010_0010_render_beauty_v001.0007.exr"

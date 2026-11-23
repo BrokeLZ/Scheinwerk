@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <!-- The Scheinwerk browser as a dockable Python panel (spec §13.2.3) -->
+  <interface name="scheinwerk" label="Scheinwerk" icon="BUTTONS_folder" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[
+def onCreateInterface():
+    import scheinwerk.dcc.houdini as sw
+    return sw.browser_widget()
+]]></script>
+    <includeInPaneTabMenu menu_position="0" create_separator="false"/>
+    <includeInToolbarMenu menu_position="0" create_separator="false"/>
+    <help><![CDATA[]]></help>
+  </interface>
+</pythonPanelDocument>

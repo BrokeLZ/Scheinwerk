@@ -16,7 +16,7 @@ This guide grows with the code. A section that says *not yet available* describe
 6. [Hooks](#hooks)
 7. [CLI (`sw`)](#cli-sw)
 8. [GUI](#gui)
-9. [DCC integrations](#dcc-integrations)
+9. [DCC integrations](#dcc-integrations) and [Houdini](#houdini)
 10. [Sync (Synology Drive)](#sync-synology-drive)
 11. [Troubleshooting](#troubleshooting)
 
@@ -49,6 +49,7 @@ uv tool install --editable /path/to/Scheinwerk
 | --- | --- |
 | Install / update the environment | `uv sync` (add `--extra gui` for PySide6) |
 | Run all tests | `uv run pytest` (the GUI tests in `tests/gui` only run after `uv sync --extra gui`; CI skips them) |
+| Run the tests inside Houdini | `uv run pytest -m houdini` (needs Houdini installed; slow) |
 | Run core tests, stop at first failure | `uv run pytest tests/core -x` |
 | Run one test | `uv run pytest tests/core/test_stdlib_only.py::test_core_imports_only_stdlib` |
 | Lint | `uv run ruff check .` |
@@ -395,9 +396,106 @@ All colours, fonts and spacing are in `src/scheinwerk/gui/theme.qss` (Qt style s
 
 ## DCC integrations
 
-*Not yet available.* Houdini arrives in Phase 4, Nuke in Phase 5, Blender in Phase 6.
+Any DCC works without a plugin: copy the next version path from the browser, save or export there, finalize. Houdini has a full integration (below); Nuke arrives in Phase 5, Blender in Phase 6.
 
-Until then, any DCC works by hand: create folders and names following the conventions above, and save or export through the DCC's own dialog.
+## Houdini
+
+Works with Houdini 21 (and 22). Scheinwerk is loaded through a Houdini *package*; nothing is copied into Houdini itself.
+
+### Install
+
+Start Houdini once (so it has a preferences folder), quit it, then in the Scheinwerk repo:
+
+```bash
+uv run sw install houdini
+```
+
+This writes `packages/scheinwerk.json` into the preferences of every Houdini version you have (on macOS `~/Library/Preferences/houdini/21.0/packages/`), pointing at this checkout. Restart Houdini. If you move the repo, run it again. To remove it: `uv run sw uninstall houdini`. A `scheinwerk.json` you wrote yourself is never touched.
+
+### What you get
+
+- **Variables follow the scene.** Whenever you open or save a scene inside a project, Houdini gets `$JOB` (the project root) and `$SW_ROOT`, `$SW_ENTITY`, `$SW_DEPT`, `$SW_TASK`, `$SW_CACHE`, … (see [spec §7.2](spec.md#72-environment-variables)). Use them in paths: `$SW_CACHE/sim/sim.$F4.bgeo.sc`. *File → New* clears them.
+- **Frame range.** When you open a shot scene whose frame range differs from the shot's (`entity.json`), Houdini asks whether to apply the shot's range.
+- **Scheinwerk menu** (main menu bar) and **Scheinwerk shelf** (add it with the `+` tab on the shelf bar):
+  - *Save Next Version*: saves the scene as the task's next version (`hero_mdl_main_v004.hip`), keeping `.hip`/`.hipnc`/`.hiplc`. The scene must already be saved in a task's `work/` folder; use the browser's *Copy next version path* for the very first save.
+  - *Open Scheinwerk Browser*: the browser from the [GUI](#gui) chapter in a floating panel. You can also dock it: in any pane, *New Pane Tab Type → Scheinwerk*.
+  - *Copy Context Path*: copies the scene's path relative to the project, e.g. `assets/char/hero/mdl/main/work/hero_mdl_main_v004.hip`.
+- **Shortcut.** To put *Save Next Version* on Ctrl+Alt+S: *Edit → Hotkeys…*, search for "Save Next Version", assign the key.
+
+### Paths in parameters
+
+In any parameter, switch to a Python expression (Alt+E, language Python) and use the helpers:
+
+```python
+import scheinwerk.dcc.houdini as sw
+sw.cache("sim")                          # …/mdl/main/cache/sim
+sw.publish_path("pants", "abc")          # …/publish/pants/v003/hero_pants_v003.abc
+sw.publish_path("sim", "bgeo.sc", frames=True)   # …/v003/hero_sim_v003.1001.bgeo.sc
+sw.usd_path("lgt")                       # …/publish/_usd/lgt/v004/sq010_0010_lgt_v004.usd
+sw.media_path("render_beauty", "exr")    # …/media/render_beauty/v002/…_v002.1001.exr
+```
+
+They point at the **highest existing version** (v001 if there is none). For a new version, make it first (browser: *Copy next version path*, or an HDA's *New version*). One-line form for a parameter: `__import__("scheinwerk.dcc.houdini", fromlist=["x"]).publish_path("pants", "abc")`.
+
+### Publishing with the HDAs
+
+Three HDAs do the publishing (you build them once, see below):
+
+| HDA | Network | Writes to |
+| --- | --- | --- |
+| `sw_publish_sop` | SOP | `publish/<product>/v###/` (bgeo.sc, vdb, abc, obj; one file or one per frame) |
+| `sw_publish_lop` | LOP | `publish/_usd/<layer>/v###/<entity>_<layer>_v###.usd`, relative paths, pointer updated |
+| `sw_render` | LOP | `media/render_<name>/v###/…_v###.####.exr` (Karma) |
+
+On each: set the name, press **New version** (creates the next `v###` and switches the node to it), then **Export** / **Render**. When it finishes, the version is finalized: `version.json` gets your *Comment* and the scene as source, and for USD the layer's pointer and the entity's root layer are updated. Exporting again **overwrites the same version** until you press *New version* again, like Houdini's File Cache. *Version* 0 means "the highest existing one".
+
+**Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error.
+
+**USD stack.** A department's scene loads the layers below it and publishes only its own. `sw.layers_below("lgt")` lists the existing pointer layers below lighting (fx, anim, layout, per `usd_layer_order`) as `$JOB/…` paths for a Sublayer LOP.
+
+### Building the HDAs
+
+Do this once; the three `.hda` files then live in the repo and every Houdini with the package loads them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly; labels are up to you).
+
+**Parameters on all three:**
+
+| Name | Type | Setup |
+| --- | --- | --- |
+| `version` | Integer | Default 0, range 0–999. |
+| `new_version` | Button | Callback (Python): `import scheinwerk.dcc.houdini as sw; sw.hda_new_version(kwargs["node"])` |
+| `shot` | String | Menu → *Use Menu Script*, Python: `import scheinwerk.dcc.houdini as sw; return sw.shot_menu()`. Only matters in sequence scenes. |
+| `comment` | String | |
+| `output` | String | Default is an expression, language Python: `__import__("scheinwerk.dcc.houdini", fromlist=["x"]).hda_output(hou.pwd())`. Tick *Disable when* or make it read-only if you like; it shows where the node writes. |
+| `execute` | Button | Callback (Python): `import scheinwerk.dcc.houdini as sw; sw.hda_execute(kwargs["node"])` |
+
+**Inside each**, one ROP connected to the HDA's input (the ROP may have any name):
+- Output path parameter: HScript expression `chs("../output")`.
+- *Post-Render Script*: enabled, language Python: `import scheinwerk.dcc.houdini as sw; sw.hda_post_render(hou.pwd().parent())`.
+
+**`sw_publish_sop`** (SOP network, 1 input; route the input through to the output with a Null):
+- Extra parameters: `product` (String), `ext` (String, menu items `bgeo.sc`, `vdb`, `abc`, `obj`; default `bgeo.sc`), `frames` (Toggle "One file per frame", default on).
+- Inside: a **ROP Geometry Output** on the input. *Output File* (`sopoutput`) = `chs("../output")`. *Valid Frame Range* (`trange`) = expression `ch("../frames")` (0 = current frame, 1 = frame range), start/end `$FSTART` / `$FEND`.
+
+**`sw_publish_lop`** (LOP network, 1 input, passes the stage through):
+- Extra parameter: `layer` (String, e.g. `asset`, `lgt`).
+- Inside: a **USD ROP** on the input. *Output File* (`lopoutput`) = `chs("../output")`. Leave the *Use Relative Paths* output processor on (it is by default). *Valid Frame Range*: render current frame.
+
+**`sw_render`** (LOP network, 1 input):
+- Extra parameter: `render_name` (String, e.g. `beauty`; the media folder becomes `render_beauty`).
+- Inside: a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* (`outputimage`) = `chs("../output")`, *Valid Frame Range*: frame range `$FSTART` / `$FEND`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
+
+The code recognises the HDA by its `product`, `layer` or `render_name` parameter, so the operator names are a convention, not a requirement.
+
+### Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| No *Scheinwerk* menu after installing | Restart Houdini. Check that `packages/scheinwerk.json` exists in the preferences of the Houdini version you start (`uv run sw install houdini` prints where it wrote it). |
+| `$JOB` is still the old folder | Save or reopen the scene: variables are set on load and save. |
+| "This scene isn't saved inside a Scheinwerk asset or shot" | Save the scene into a task's `work/` folder first (browser: *Copy next version path*). |
+| "This is a scene of sequence sq010: choose the shot" | Pick the node's *Shot*, or set the `SW_SHOT` context option. |
+
+For developers: `uv run pytest -m houdini` runs the integration inside every Houdini found on the machine (slow, so it isn't part of the normal test run).
 
 ## Sync (Synology Drive)
 

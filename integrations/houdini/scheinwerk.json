@@ -1,0 +1,7 @@
+{
+  "env": [
+    {"SCHEINWERK": "/path/to/Scheinwerk"},
+    {"PYTHONPATH": {"value": "$SCHEINWERK/src", "method": "prepend"}}
+  ],
+  "path": "$SCHEINWERK/integrations/houdini"
+}

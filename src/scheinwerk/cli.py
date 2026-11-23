@@ -20,6 +20,7 @@ from scheinwerk.core.doctor import check
 from scheinwerk.core.entities import Department, Entity, Task
 from scheinwerk.core.env import env_for
 from scheinwerk.core.errors import InvalidName, NotFound, NotInProject, ScheinwerkError
+from scheinwerk.core.install import install_houdini, uninstall_houdini
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import (
     finalize,
@@ -493,6 +494,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if issues else 0
 
 
+def _repo() -> Path:
+    """The Scheinwerk checkout this `sw` runs from (src/scheinwerk/cli.py -> repo)."""
+    return Path(__file__).resolve().parents[2]
+
+
+def cmd_install(args: argparse.Namespace) -> None:
+    for path in install_houdini(_repo()):
+        print(path)
+
+
+def cmd_uninstall(args: argparse.Namespace) -> None:
+    removed = uninstall_houdini()
+    for path in removed:
+        print(path)
+    if not removed:
+        print("Nothing to remove.")
+
+
 def _has_pyside() -> bool:
     return importlib.util.find_spec("PySide6") is not None
 
@@ -637,6 +656,13 @@ def build_parser() -> argparse.ArgumentParser:
         cmd_doctor,
         "report naming problems, conflict copies, absolute paths, empty versions",
     )
+
+    for name, func, help_ in (
+        ("install", cmd_install, "install a DCC integration (writes the Houdini package file)"),
+        ("uninstall", cmd_uninstall, "remove what `sw install` wrote"),
+    ):
+        p = add(name, func, help_, parents=())
+        p.add_argument("dcc", choices=("houdini",))
 
     p = add("gui", cmd_gui, "open the Scheinwerk browser", parents=())
     p.add_argument("path", nargs="?", help="open the project (and select what) this path points at")

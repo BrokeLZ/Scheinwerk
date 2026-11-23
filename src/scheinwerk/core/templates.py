@@ -111,6 +111,22 @@ def format_product_stem(entity: str, product: str, version: int) -> str:
     return f"{entity}_{product}_{format_version(version)}"
 
 
+_PRODUCT_EXT = r"[a-z0-9]+(?:\.[a-z0-9]+)?"  # abc, bgeo.sc
+
+
+def format_product_file(
+    entity: str, product: str, version: int, ext: str, frame: int | None = None
+) -> str:
+    """`hero_pants_v002.abc`, `…_v002.1001.bgeo.sc`: the recommended file name (spec §5.3)."""
+    if not re.fullmatch(_PRODUCT_EXT, ext):
+        raise InvalidName(
+            f"Invalid extension {ext!r}: lowercase letters and digits without the leading dot "
+            "(abc, bgeo.sc)."
+        )
+    middle = f".{frame:04d}" if frame is not None else ""
+    return f"{format_product_stem(entity, product, version)}{middle}.{ext}"
+
+
 def step_name(text: str, delta: int, step: int = 10) -> str | None:
     """Move the trailing number of `text` to the next (delta > 0) or previous (delta < 0)
     multiple of `step`, keeping prefix and digit count: `sq020` -> `sq030`, `0040` -> `0030`.

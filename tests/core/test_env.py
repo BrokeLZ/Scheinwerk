@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scheinwerk.core.context import Context
-from scheinwerk.core.env import env_for
+from scheinwerk.core.env import ENV_VARS, cleared_env, env_for
 
 KEYS = {
     "SW_ROOT",
@@ -65,3 +65,9 @@ def test_sequence(project: Path) -> None:
 def test_forward_slashes_on_every_os(project: Path) -> None:
     env = env_for(Context.from_path(project / "assets/hero/mdl/main/work"))
     assert all("\\" not in value for value in env.values())
+
+
+def test_env_vars_constant_matches(project: Path) -> None:
+    env = env_for(Context.from_path(project / "assets/hero"))
+    assert tuple(env) == ENV_VARS
+    assert cleared_env() == dict.fromkeys(ENV_VARS, "")
