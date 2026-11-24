@@ -118,7 +118,7 @@ task.new_version_from(task.latest_workfile())          # copy as next version
 vdir = next_publish(hero, "pants_drape_base")           # creates publish/pants_drape_base/v001/
 finalize(vdir, source=task.latest_workfile().path, comment="first drape")
 
-vdir = next_usd(hero, "asset")   # publish/_usd/asset/v001/ — export the USD here, then:
+vdir = next_usd(hero, "geo")     # publish/_usd/geo/v001/ — export the USD here, then:
 finalize(vdir)                   # writes version.json, the pointer and hero.usd
 set_current(vdir)                # roll the pointer back to this version later
 
@@ -209,7 +209,7 @@ departments
   mdl
     main
 products
-  asset  [usd]  latest v001, current v001
+  geo  [usd]  latest v001, current v001
   scan  latest v001
 media
   (none)
@@ -248,9 +248,9 @@ sw ingest ~/Downloads/old.hip hero mdl     # copy files in as new versions, one 
 ### Publishing
 
 ```bash
-V=$(sw next-usd hero asset)         # creates publish/_usd/asset/v00N/ and prints it
+V=$(sw next-usd hero geo)           # creates publish/_usd/geo/v00N/ and prints it
 # … export the USD into $V (Houdini: USD ROP with "Use Relative Paths") …
-sw finalize "$V" -m "first lookdev" --source "$(sw latest hero --work mdl)"
+sw finalize "$V" -m "first model" --source "$(sw latest hero --work mdl)"
 
 sw next-publish hero pants          # publish/pants/v00N/
 sw next-publish hero pants --file   # …/pants/v00N/hero_pants_v00N (folder created; add the extension in the DCC)
@@ -503,7 +503,7 @@ It reads `.bgeo.sc`, `.vdb`, `.obj` and `.abc` (Alembic arrives as packed geomet
 **Scheinwerk Import USD** (`sw_import_lop`, LOP, optional input) brings a USD layer into the stage:
 
 - *Entity*: as above.
-- *Layer*: empty means **all layers** of the entity (its entry/root layer `hero.usd`; in the picker: *All layers of the entity*), or one layer (`asset`, `lgt`, …).
+- *Layer*: empty means **all layers** of the entity (its entry/root layer `hero.usd`; in the picker: *All layers of the entity*), or one layer (`geo`, `lgt`, …).
 - *Version*: `current` (default: the layer's pointer, so *Set as current* and new publishes are followed) or a `v###` to pin one.
 - *Mode*: *Auto* references an asset (at *Primitive Path*, default `/hero`) and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (e.g. `/hero/geo`).
 
@@ -577,7 +577,7 @@ For developers: `uv run pytest -m houdini` runs the integration inside every Hou
 ## Sync (Synology Drive)
 
 - Exclude `cache/` folders from sync with a Synology Drive file filter. Caches are large and never referenced downstream.
-- Scheinwerk writes pointer layers and `version.json` last and atomically, so the other machine never sees a pointer to a version that hasn't synced yet.
+- Scheinwerk writes pointer layers and `version.json` last and atomically, so a pointer never names an unfinished version on the machine that publishes. Sync doesn't keep that order, though: Synology Drive can upload the small pointer before a large USD file, so the other machine may briefly see a pointer to a file that hasn't arrived. Let sync finish before you open the work on the other machine.
 - Synology conflict copies (`…_Conflict…`) are not hidden. `sw doctor` reports them.
 
 ## Troubleshooting

@@ -1,6 +1,6 @@
 # Scheinwerk — Specification
 
-Status: v1 spec · Last updated: 2026-11-22
+Status: v1 spec · Last updated: 2026-11-24
 This file is the single source of truth for Scheinwerk. Code serves the spec. If a decision changes, change this file in the same commit.
 
 ---
@@ -20,7 +20,7 @@ Any DCC can take part with no plugin at all: the GUI/CLI hands out the next path
 
 ### Non-goals (v1)
 
-No database or server. No multi-user handling, locking or permissions. No task status, assignments or scheduling. No review/annotation tool or built-in media player. No custom USD asset resolver. No symlinks. No per-file metadata for workfiles. No template-editor UI. No file watchers. No ORM layer over the folders.
+No database or server. No multi-user handling, locking or permissions. No task status, assignments or scheduling. No review/annotation tool or built-in media player. No custom USD asset resolver, value clips, asset assemblies or per-shot asset pinning (shots always use an asset's current versions; renders record what they used, §8.3). No symlinks. No per-file metadata for workfiles. No template-editor UI. No file watchers. No ORM layer over the folders.
 
 ---
 
@@ -72,8 +72,9 @@ No database or server. No multi-user handling, locking or permissions. No task s
 │           │       └── cache/            # WIP caches, free-form, never referenced downstream
 │           ├── publish/
 │           │   ├── _usd/
-│           │   │   ├── <asset>.usd       # asset entry layer (pointer)
-│           │   │   └── <layer>/
+│           │   │   ├── <asset>.usd       # asset entry layer: the component (§9.2)
+│           │   │   ├── payload.usd       # its payload: the asset's layers, mtl over geo
+│           │   │   └── <layer>/          # geo, mtl (§9.3)
 │           │   │       ├── <layer>.usd   # pointer layer
 │           │   │       └── v###/         # version folders
 │           │   └── <product>/v###/       # any non-USD product, free name
@@ -83,19 +84,23 @@ No database or server. No multi-user handling, locking or permissions. No task s
 │       ├── _seq/                         # optional sequence-level entity
 │       │   ├── <dept>/<task>/work|cache/
 │       │   ├── publish/                  # only for genuinely sequence-wide products
+│       │   │   └── _usd/
+│       │   │       └── <seq>.usd         # sequence root layer: its layers, then structure
 │       │   └── media/
 │       └── <shot>/                       # <seq>_<nnnn>, unique project-wide
 │           ├── entity.json               # frame range
 │           ├── <dept>/<task>/work|cache/
 │           ├── publish/
 │           │   ├── _usd/
-│           │   │   ├── <shot>.usd        # shot root layer
+│           │   │   ├── <shot>.usd        # shot root layer: its layers, then the sequence's (or structure)
 │           │   │   └── <layer>/          # layout, anim, fx, lgt: pointer + v###/
 │           │   └── <product>/v###/
 │           └── media/<name>/v###/
 ├── shared/                               # project-wide: HDAs, templates, hooks, LUTs
 │   ├── hooks/
-│   └── templates/                        # optional empty workfile templates: empty.<ext>
+│   ├── templates/                        # optional empty workfile templates: empty.<ext>
+│   └── usd/
+│       └── structure.usd                 # the shot hierarchy (§9.2), written by core
 └── io/                                   # in/ and out/: plates, references, deliveries
 ```
 
@@ -139,8 +144,8 @@ Name suggestions (the GUI's `-`/`+` buttons) count in steps of 10. Each click mo
 | Workfile | `{entity}_{dept}_{task}_v{version:03d}.{ext}` | `sq010_0010_lgt_main_v012.hip` |
 | Sequence workfile | same; `entity` = sequence name | `sq010_lgt_main_v007.hip` |
 | Product version folder | `publish/{product}/v{version:03d}/` | `publish/pants_drape_base/v001/` |
-| USD version folder | `publish/_usd/{layer}/v{version:03d}/` | `publish/_usd/asset/v003/` |
-| USD pointer | `publish/_usd/{layer}/{layer}.usd` | `publish/_usd/asset/asset.usd` |
+| USD version folder | `publish/_usd/{layer}/v{version:03d}/` | `publish/_usd/geo/v003/` |
+| USD pointer | `publish/_usd/{layer}/{layer}.usd` | `publish/_usd/geo/geo.usd` |
 | Product file (recommended) | `{entity}_{product}_v{version:03d}[.{frame:04d}].{ext}` | `hero_pants_drape_base_v001.abc` |
 | Media version folder | `media/{media}/v{version:03d}/` | `media/render_beauty/v004/` |
 | Media file (recommended) | `{entity}_{media}_v{version:03d}.{frame:04d}.{ext}` | `sq010_0010_render_beauty_v004.1001.exr` |
@@ -229,7 +234,7 @@ Listings come from scanning folders every time. Ignored entries (§4.2) are skip
 | Kind | Used in | Form |
 | --- | --- | --- |
 | Root-relative | all JSON, CLI `--relative`, GUI "copy relative path" | `shots/sq010/sq010_0010/publish/fx_pyro/v002` |
-| File-relative | USD asset paths, Blender `//` | `./v003/hero_asset_v003.usd`, `../../../../assets/char/hero/publish/_usd/hero.usd` |
+| File-relative | USD asset paths, Blender `//` | `./v003/hero_geo_v003.usd`, `../../../../assets/char/hero/publish/_usd/hero.usd` |
 | Env-relative | Houdini parms, Nuke Read/Write | `$SW_ROOT/shots/...` (Houdini also: `$JOB`) |
 
 Plugins write file-relative paths where the format supports it (USD, Blender) and env-relative paths otherwise. Nothing persisted ever contains a drive letter, `/Volumes/…`, `/Users/…` or a UNC path.
@@ -283,7 +288,7 @@ All JSON is UTF-8 with LF line endings, indented with 2 spaces and written atomi
 ```
 
 - `departments` lists what the GUI and CLI offer when creating. Departments/tasks that exist on disk but not in the template are still shown, marked as *custom*.
-- `usd_layer_order`: strongest first, used for the asset entry layer and the shot/sequence root layer (§9.2).
+- `usd_layer_order`: strongest first, used for the shot and sequence root layers (§9.2). Asset layers have a fixed order instead (§9.3).
 - `templates`: optional overrides of §5.2/§5.3 patterns, keyed by template name. Empty = defaults.
 
 ### 8.2 `entity.json` (entity folder, optional)
@@ -307,14 +312,16 @@ Creating an asset writes `{ "schema": 1 }`; creating a shot writes the same plus
   "dcc": "houdini",
   "user": "lorenz",
   "created": "2026-11-22T11:40:00+01:00",
-  "comment": ""
+  "comment": "",
+  "usd_files": ["assets/char/hero/publish/_usd/geo/v003/hero_geo_v003.usd"]
 }
 ```
 
 All fields are optional. Readers must never require this file; a missing or broken file reads as no info.
 
 - `source` is root-relative; a source outside the project is refused. `dept` and `task` come from the source path.
-- Re-finalizing (e.g. "Edit comment") always sets `comment`, sets `source`/`dept`/`task`/`dcc` only when given, and keeps `user`, `created` and unknown keys.
+- `usd_files` (renders only): the published USD files the render's composed stage used, root-relative and sorted: every layer in a `v###` folder under `publish/` (pointer, entry and root layers are left out, they float). The integration collects them (§13.2). Shots follow the current versions of everything, so this is the record of what a render was made from; to reproduce it, set those versions as current.
+- Re-finalizing (e.g. "Edit comment") always sets `comment`, sets `source`/`dept`/`task`/`dcc`/`usd_files` only when given, and keeps `user`, `created` and unknown keys.
 
 ### 8.4 User settings (machine-local, never in a project)
 
@@ -352,7 +359,24 @@ Missing keys are filled from these defaults when reading; a missing or broken fi
 1. `next_usd(entity, layer)` → `publish/_usd/<layer>/v###/`.
 2. Export (Houdini USD ROP with the *Use Relative Paths* output processor).
 3. `finalize(…)` → writes `version.json`, then atomically rewrites the pointer layer, then the entry/root layer. Nothing is written if the main file can't be determined.
-4. The entry/root layer `publish/_usd/<entity>.usd` (asset entry layer, shot or sequence root layer) sublayers `./<layer>/<layer>.usd` for every layer that has a pointer. It is rewritten on every finalize/set-current, so it exists from the first publish and picks up new layer names. Identical content is not rewritten (§8).
+4. The entry/root layers are rewritten on every finalize/set-current, so they exist from the first publish and pick up new layer names. Identical content is not rewritten (§8). Each lists the entity's layers that have a pointer (`./<layer>/<layer>.usd`):
+   - **Asset**: two files. `payload.usd` sublayers the asset's layers in the asset order (§9.3). `<asset>.usd` is the *component*: one prim `/<asset>` with `kind = "component"`, `assetInfo` (name) and a payload to `./payload.usd`, and `defaultPrim` = the asset. Referencing an asset therefore loads nothing heavy until its payload is loaded.
+   - **Shot**: `<shot>.usd` sublayers the shot's layers (`usd_layer_order`, then A–Z), then as the weakest the sequence root layer `../../../_seq/publish/_usd/<seq>.usd` when it exists, else the structure layer. The sequence root layer ends with the structure layer, so a shot's stack holds it exactly once. No `defaultPrim`.
+   - **Sequence**: `_seq/publish/_usd/<seq>.usd` sublayers the sequence's own layers like a shot, then the structure layer. When it is created, the root layers of all the sequence's shots are rewritten so they include it.
+   - **Structure** (`shared/usd/structure.usd`, one per project): the shot hierarchy, so no department layer has to define it and publishes can come from any file in any order. Core writes it when the project is created, and in older projects whenever a root layer is written or *Shot Start* (§13.2) loads it and the file is missing. It is never overwritten and not versioned. A project may change it, but the HDA defaults (`/world/assets/<asset>`, §13.2) assume this convention:
+
+     | Prim | Type, kind | Filled by |
+     | --- | --- | --- |
+     | `/world` | Xform, `group` | |
+     | `/world/assets` | Xform, `group` | layout: asset references `/world/assets/<asset>` |
+     | `/world/env` | Xform, `group` | layout: environment, set dressing |
+     | `/world/fx` | Xform, `group` | fx |
+     | `/cameras` | Scope | layout, anim |
+     | `/lights` | Scope | lighting |
+     | `/Render` | Scope | lighting: render settings and products (Karma's default location) |
+5. **Time metadata.** Every pointer, entry, payload and root layer core writes carries `framesPerSecond` and `timeCodesPerSecond` = the entity's fps (its `entity.json` override, else the project's; written like the JSON value: `24`, `23.976`). USD rescales a sublayer, reference or payload whose `timeCodesPerSecond` differs from the layer that includes it, and a layer without one counts as 24, so without this a 25 fps publish would be retimed (keys at 1001 land at 961). Shot root layers also carry `startTimeCode`/`endTimeCode` = the shot's frames (when set), so usdview and husk open on the right range; sequence root layers carry no range (it is derived from the shots and would go stale). `set_frames` rewrites the shot's root layer if it exists. A changed fps reaches a layer the next time core rewrites it (publish, set-current, `set_frames`). The structure layer has no time metadata: it holds no time samples.
+6. **References stay in `publish/`.** Everything a published layer points at (sublayers, references, payloads, textures, volumes, caches) lives under a `publish/` folder: in the layer's own version folder, in a version of a product or another layer, or another entity's entry/root layer or pointer. Never under `work/` or `cache/`: those change, and `cache/` is not synced (§9.5), so the published layer would change or break on the other machine. Heavy per-frame data that belongs to one layer (e.g. the VDBs of an fx layer) goes into that layer's version folder next to the main file (`{entity}_{layer}_v###.####.vdb`); data several layers or entities use goes into a product (`publish/<product>/v###/`). `sw doctor` reports violations (§11).
+7. **Known limit:** published layers reach other entities by file-relative paths, so moving an asset to another category, or renaming an entity, after it is referenced breaks those paths (a rename tool may come later, §16).
 
 Pointer layer format (ASCII content in a `.usd` file, written as plain text by the core, no `pxr` needed):
 
@@ -360,30 +384,143 @@ Pointer layer format (ASCII content in a `.usd` file, written as plain text by t
 #usda 1.0
 (
     defaultPrim = "hero"
-    subLayers = [@./v003/hero_asset_v003.usd@]
+    framesPerSecond = 24
+    timeCodesPerSecond = 24
+    subLayers = [@./v003/hero_geo_v003.usd@]
 )
 ```
 
-`defaultPrim` is always written (= entity name). Without it, references to the pointer fail. Layer paths must be file-relative (`./` or `../`); anything else is refused.
+Asset pointers have `defaultPrim` = the asset name: without it, references to the pointer fail. Shot and sequence pointers have none (they are sublayered, and the entity is not a prim). Layer paths must be file-relative (`./` or `../`); anything else is refused.
 
 The pointer targets the main USD file (`.usd`, `.usda`, `.usdc`) at the top of the version folder: the only one if there is one, else the one with the recommended name `{entity}_{layer}_v###`, else `main_file` must be given (`finalize` and `set_current` both take it).
 
-Entry/root layer format. Layers are ordered strongest first: names in `usd_layer_order` in that order, then all others A–Z. The asset entry layer has `defaultPrim` = asset name (it is referenced); shot and sequence root layers have none (they are sublayered or opened, not referenced). With no layers: `subLayers = []`.
+Entry/root layer formats (strongest first; with no layers: `subLayers = []`). Asset entry layer `hero.usd` and its payload `payload.usd`:
 
 ```text
 #usda 1.0
 (
     defaultPrim = "hero"
+    framesPerSecond = 24
+    timeCodesPerSecond = 24
+)
+
+def Xform "hero" (
+    kind = "component"
+    assetInfo = {string name = "hero"}
+    payload = @./payload.usd@</hero>
+)
+{
+}
+```
+
+```text
+#usda 1.0
+(
+    framesPerSecond = 24
+    timeCodesPerSecond = 24
     subLayers = [
-        @./fx/fx.usd@,
+        @./mtl/mtl.usd@,
         @./geo/geo.usd@
     ]
 )
 ```
 
+Shot root layer `sq010_0010.usd` (sequence and shot layers are sublayered, not referenced: they share the shot's namespace). Without a sequence root layer, its last entry is the structure layer `@../../../../../shared/usd/structure.usd@`:
+
+```text
+#usda 1.0
+(
+    framesPerSecond = 24
+    timeCodesPerSecond = 24
+    startTimeCode = 1001
+    endTimeCode = 1096
+    subLayers = [
+        @./lgt/lgt.usd@,
+        @./layout/layout.usd@,
+        @../../../_seq/publish/_usd/sq010.usd@
+    ]
+)
+```
+
+Sequence root layer `sq010.usd`:
+
+```text
+#usda 1.0
+(
+    framesPerSecond = 24
+    timeCodesPerSecond = 24
+    subLayers = [
+        @./lgt/lgt.usd@,
+        @../../../../../shared/usd/structure.usd@
+    ]
+)
+```
+
+Structure layer `shared/usd/structure.usd`:
+
+```text
+#usda 1.0
+
+def Xform "world" (
+    kind = "group"
+)
+{
+    def Xform "assets" (
+        kind = "group"
+    )
+    {
+    }
+
+    def Xform "env" (
+        kind = "group"
+    )
+    {
+    }
+
+    def Xform "fx" (
+        kind = "group"
+    )
+    {
+    }
+}
+
+def Scope "cameras"
+{
+}
+
+def Scope "lights"
+{
+}
+
+def Scope "Render"
+{
+}
+```
+
+`payload.usd` parses like the entry layer (§6.2: `usd`, no product, ext `usd`) and is not round-trippable; it is always written by path. The structure layer is outside any entity (§6.2 rule 2).
+
 "Set as latest" on any USD version rewrites the pointer to that version. That is the only form of pinning/rollback.
 
-### 9.3 Ingest
+### 9.3 Asset layers (roles, hierarchy, variants)
+
+An asset is built from two layers, published and versioned separately:
+
+| Layer | Department | Holds | Prims | Variant set (convention) |
+| --- | --- | --- | --- | --- |
+| `geo` | modelling (also rigs, grooms) | geometry, render and proxy | `/<asset>/geo/render`, `/<asset>/geo/proxy` (with purposes) | `model` |
+| `mtl` | lookdev | materials and bindings | `/<asset>/mtl/…`, bindings as overs on `/<asset>/geo/…` | `look` |
+
+- **Order** in `payload.usd`: `mtl`, then `geo`, then any other asset layer A–Z. Other names are allowed but get no conventions.
+- **Hierarchy:** everything an asset layer authors lives under `/<asset>`. Variant sets sit on `/<asset>`. The component prim's `kind` and `payload` come only from the entry layer. The skeleton (`/<asset>/geo/render`, `/<asset>/geo/proxy`, `/<asset>/mtl`) is built by *Asset Start* (§13.2) at the top of the scene and is therefore published in `geo`, the first layer; `mtl` adds to it.
+- **Bindings** go on `/<asset>/geo/render` (or a group above the meshes), not on single meshes, where the materials allow it: bindings are inherited, so model variants that rename or add meshes keep their materials.
+- **Textures** are a product of the asset (conventionally `textures`: `publish/textures/v###/`, written via *Copy next version path* or ingested), and the `mtl` layer references them there (§9.2 item 6), never in `tex/<task>/work/`.
+- **One scene, several layers:** an asset is usually built in one scene: geometry, then *Publish USD* `geo`, then materials, then *Publish USD* `mtl`. Each publish node ends with a Layer Break (§13.2), so the `mtl` layer holds only what was added after the `geo` publish.
+- **Variants** are authored by the user in the layer before publishing (in Houdini e.g. with *Add Variant* LOPs); Scheinwerk never writes them. Convention: one variant set per layer, named `model` (`geo`) or `look` (`mtl`), on `/<asset>`. Other names work too; nothing checks them. Variant names and the default selection are up to the user.
+- **Variants live inside the payload.** A stage that hasn't loaded an asset's payload doesn't show its variant sets (variant menus are empty); a selection authored on the referencing prim still applies once the payload loads. Houdini loads payloads by default.
+- **No nesting:** an asset never contains other assets (no nested components, no assemblies). An environment built from props is set-dressed in a shot's `layout` layer under `/world/env`, or for a whole sequence in the `_seq` `layout` layer.
+- Shots reference `<asset>.usd` (the component) and choose variants with the stage's own variant selection.
+
+### 9.4 Ingest
 
 `ingest(files, target)` copies files into the next workfile version (renamed to the template) or into the next product/media version folder (names kept). It never moves or deletes the originals.
 
@@ -391,9 +528,10 @@ Entry/root layer format. Layers are ordered strongest first: names in `usd_layer
 - Target a product or media name: all files go into one new version folder. Two files with the same name are refused.
 - Only files, no folders. Everything is checked before the first copy.
 
-### 9.4 Sync safety (Synology Drive)
+### 9.5 Sync safety (Synology Drive)
 
-- Pointer layers and `version.json` are written last, atomically, so the other machine never syncs a pointer to a version that hasn't arrived yet.
+- Pointer layers and `version.json` are written last, atomically, so on the machine that publishes a pointer never names an incomplete version.
+- Sync doesn't keep that order: Synology Drive may upload a small pointer before a large version file, so the other machine can briefly see a pointer to a file that hasn't arrived. Let sync finish before opening the work on the other machine. Scheinwerk does not try to guard against this.
 - `cache/` should be excluded from sync (Synology Drive file filter). Documented, not enforced.
 
 ---
@@ -426,7 +564,7 @@ copy_new(src, dest)                         # never overwrites (AlreadyExists)
 find_root(path) -> Path | None
 read_config(root) -> dict
 Project.find(path) -> Project | None
-Project.create(folder, name, **settings) -> Project   # writes scheinwerk.json + assets/ shots/ shared/{hooks,templates}/ io/{in,out}/;
+Project.create(folder, name, **settings) -> Project   # writes scheinwerk.json + assets/ shots/ shared/{hooks,templates}/ shared/usd/structure.usd io/{in,out}/;
                                                       # refuses an existing or nested project and unknown settings
 project.root -> Path
 project.config -> dict                      # parsed scheinwerk.json
@@ -457,7 +595,7 @@ context.path() -> Path                      # inverse of from_path
 # entities.py  (thin, path-backed; no cached state)
 Entity  # Asset, Shot and Sequence are one class told apart by .type ("asset" | "shot" | "sequence")
     .project .type .name .category .sequence .path .valid .frames
-    .set_frames(start, end)                 # assets and shots; sequences derive theirs
+    .set_frames(start, end)                 # assets and shots; sequences derive theirs; rewrites a shot's root layer if it exists
     .departments() -> list[Department]
     .department(name) -> Department
     .create_department(name, tasks=("main",)) -> Department   # each task gets work/ and cache/
@@ -488,7 +626,7 @@ file_sequences(paths) -> list[FileGroup]    # FileGroup: .label ("name.####.exr"
 next_publish(entity, name) -> Path
 next_media(entity, name) -> Path
 next_usd(entity, layer) -> Path
-finalize(version_dir, *, source=None, comment="", main_file=None, dcc=None) -> None
+finalize(version_dir, *, source=None, comment="", main_file=None, dcc=None, usd_files=None) -> None   # usd_files: renders (§8.3)
 set_current(usd_version_dir, *, main_file=None) -> None   # rewrite pointer
 ingest(files, target) -> list[Path]
 
@@ -517,8 +655,11 @@ open_command(path, app=None) / reveal_command(path)   # the commands, for tests
 check(project) -> list[Issue]               # Issue(kind, path, detail); report only (§11)
 
 # usd_pointer.py
-write_pointer(path, target_rel, default_prim) -> None
-write_root_layer(path, sublayers, default_prim=None) -> None
+# every writer except write_structure adds framesPerSecond/timeCodesPerSecond = fps (§9.2 item 5)
+write_pointer(path, target_rel, *, fps, default_prim=None) -> None   # default_prim: asset pointers only
+write_root_layer(path, sublayers, *, fps, frames=None) -> None       # shot/sequence root, payload.usd; frames: shots
+write_component(path, asset, *, fps) -> None                         # <asset>.usd, payload ./payload.usd
+write_structure(path) -> None                                        # shared/usd/structure.usd, only when missing
 read_pointer(path) -> str | None
 ```
 
@@ -567,7 +708,8 @@ sw gui [path]                               # Phase 3
   - `invalid name`: categories, entities, departments, tasks, products, USD layers and media whose names break §5;
   - `conflict copy`: any file or folder whose name contains `Conflict` (Synology);
   - `absolute path`: the first drive letter, `/Users/`, `/Volumes/` or UNC path in each `.usd`, `.usda` and `.nk` file (`cache/` is skipped);
-  - `empty version`: version folders with no files besides `version.json`.
+  - `empty version`: version folders with no files besides `version.json`;
+  - `unpublished reference`: the first path through a `work/` or `cache/` folder in each `.usd` and `.usda` file under `publish/` (a published layer may only reference published files, §9.2 item 6). `work` and `cache` are reserved names, so such a path segment always means a task folder.
 
 ---
 
@@ -663,26 +805,32 @@ Target Houdini 21 (Python 3.11, PySide6 6.5); everything is also checked in Houd
 
 1. **Package** `integrations/houdini/scheinwerk.json` sets `SCHEINWERK` (the checkout), prepends `$SCHEINWERK/src` to `PYTHONPATH` and adds `$SCHEINWERK/integrations/houdini` to `HOUDINI_PATH` (`python3.11libs/` and `python3.13libs/` with the same `pythonrc.py`, `MainMenuCommon.xml`, `toolbar/`, `python_panels/`, `otls/`). `sw install houdini` (`core/install.py`) writes it, with the checkout's absolute path, into `packages/` of every Houdini preferences folder that exists (macOS `~/Library/Preferences/houdini/<X.Y>/`, Windows `houdini<X.Y>/` in the user's Documents folder, read from the registry because it can be moved (e.g. to `D:\you\Dokumente`; fallback `~/Documents`), Linux `~/houdini<X.Y>/`). It is machine-local, so the absolute path is allowed (§2.4). A `scheinwerk.json` that doesn't set `SCHEINWERK` was not written by Scheinwerk: install refuses (writing nothing) and uninstall skips it.
 2. **Scene callbacks** (`hou.hipFile.addEventCallback`, registered by `pythonrc.py`): after load and after every save → set the §7.2 variables and `$JOB` (= `SW_ROOT`) with `hou.putenv` **and** `os.environ` (so Python code and child processes such as husk see them too); after *File → New* → clear them. On load, and on a save that moves the scene to another entity, if the entity's frame range differs from the scene's, ask before applying it (only with a UI; headless sessions never change it). Callback errors are logged, never raised.
-3. **Menu + shelf + panel:** a *Scheinwerk* main menu and shelf with *Save Next Version*, *Open Scheinwerk Browser* (the §12 browser as a Python panel `scheinwerk`, dockable from the pane-tab menu), *Copy Context Path* (the scene's root-relative path). *Save Next Version* needs a scene saved in a task's `work/`, keeps the extension (`.hip`, `.hipnc`, `.hiplc`) and runs the `post_save` hook. The spec's Ctrl+Alt+S is assigned by the user in the Hotkey Manager (Houdini's hotkey API is not available to verify headless).
+3. **Menu + shelf + panel:** a *Scheinwerk* main menu and shelf with *Save Next Version*, *Open Scheinwerk Browser* (the §12 browser as a Python panel `scheinwerk`, dockable from the pane-tab menu), *Copy Context Path* (the scene's root-relative path), *Publish All USD*. *Save Next Version* needs a scene saved in a task's `work/`, keeps the extension (`.hip`, `.hipnc`, `.hiplc`) and runs the `post_save` hook. The spec's Ctrl+Alt+S is assigned by the user in the Hotkey Manager (Houdini's hotkey API is not available to verify headless). *Publish All USD* exports every `sw_publish_lop` in the scene whose target is *Publish* and that isn't bypassed, upstream first (in a LOP chain a node is exported before the nodes below it), so a scene that publishes several layers can't leave one stale. A node whose version already exists first gets a new version (as *New version*), so nothing published is overwritten. With a UI it first asks, listing the nodes and their versions. It stops at the first error.
 4. **Expression helpers** (`import scheinwerk.dcc.houdini as sw`, Python parameter expressions; they return absolute runtime paths, never stored):
    - `sw.cache(name)` → `<task>/cache/<name>` (free-form).
    - `sw.publish_path(product, ext, version=None, frames=False, shot=None)`, `sw.usd_path(layer, version=None, shot=None)`, `sw.media_path(name, ext, version=None, frames=True, shot=None)` → the recommended file (§5.3) in `version`, default the **highest existing** version (v001 if none). `frames` adds the evaluated frame (`.1001`).
-   - `sw.shots()` → `[(shot, frames), …]` of the scene's sequence; `sw.shot_menu()` for menu parms; `sw.set_shot(name)`; `sw.layers_below(layer, shot=None)` (item 8).
+   - `sw.shots()` → `[(shot, frames), …]` of the scene's sequence; `sw.shot_menu()` for menu parms; `sw.set_shot(name)`.
 5. **Versioning on nodes:** a node writes into a fixed version until the user clicks *New version*, which sets the node's `version` parm to the highest existing `v###` + 1 (1 when there is none yet). It creates nothing: *Export*/*Render* creates the version folder right before the ROP runs, so an unused number leaves no empty folder. Unlike `next_version_dir` this doesn't reserve the number, so two nodes can pick the same one; the Info box shows when a version already exists. `version` starts at 1 and can't go below; choosing a name sets it to that name's highest version (1 for a new one). Exporting again overwrites that version's files and finalizes it again. Without a valid name nothing is written or finalized: every HDA function refuses it, and the buttons are disabled while the name is empty. Errors from the buttons appear as a message box.
-6. **HDAs (five, in `integrations/houdini/otls/` as `.hdalc` (Houdini Indie); their build is described in the usage guide). Writing:**
+6. **HDAs (seven, in `integrations/houdini/otls/` as `.hdalc` (Houdini Indie); their build is described in the usage guide). Writing:**
    - `sw_publish_sop`: SOP, wraps a ROP Geometry Output → `publish/<product>/v###/` (or the task cache, below). Name parm `product`; also `ext` (bgeo.sc, vdb, abc, obj). One file per frame for the two ranges, one file without frame number for *Current Frame*. Default range: *Shot Range*.
-   - `sw_publish_lop`: LOP, wraps a USD ROP with the *Use Relative Paths* output processor (on by default) → `publish/_usd/<layer>/v###/{entity}_{layer}_v###.usd` (or the task cache, below). Name parm `layer`. Always one file; a range writes time samples. Default range: *Current Frame*.
-   - `sw_render` (**work in progress**: works for simple renders, far from done): LOP, wraps a USD Render ROP (Karma, one husk run per frame) → `media/render_<name>/v###/` with its own counter, always one `.exr` per frame. Name parm `render_name` (without `render_`). Default range: *Shot Range*.
+   - `sw_publish_lop`: LOP, wraps a USD ROP with the *Use Relative Paths* output processor (on by default) → `publish/_usd/<layer>/v###/{entity}_{layer}_v###.usd` (or the task cache, below). Name parm `layer`. Always one main file; a range writes time samples. Default range: *Current Frame*.
+   - **Layer Break After** (`layer_break`, toggle on `sw_publish_lop`, default on): the HDA's output passes the stage on through a Layer Break, so publishes further down the same chain write only what was added after this one (one scene can publish `geo` then `mtl`, or `layout`, `anim`, then `lgt`).
+   - **Asset layers on `sw_publish_lop`** (§9.3): with the layer `geo` or `mtl` in an asset scene, the Info box warns about prims outside `/<asset>`. The HDA publishes the stage as it comes in; variants are authored by the user upstream (e.g. Houdini's *Add Variant* LOP), never by the HDA.
+   - **Starting a scene** (LOP HDAs, no input, built by `build_hdas.py`):
+     - `sw_asset_start`: the asset skeleton for the scene's asset: `/<asset>` (Xform), `/<asset>/geo` with `render` and `proxy` (purposes render and proxy), `/<asset>/mtl` (Scope). Only in asset scenes. It authors prims, which end up in the first publish (`geo`).
+     - `sw_shot_start`: loads, as sublayers behind a Layer Break (so none of it is published again), the project's structure layer (through the sequence root layer when `sequence` is ticked and that exists, else directly, as in the shot root layer, §9.2), and the published layers ticked in `load` (a multi-select menu of the target's `usd_layer_order` layers plus `sequence`; default `sequence`): tick the layers published from *other* scenes, e.g. `fx` in the main scene, `layout` and `anim` in an fx scene. Sets the stage's frame range (the shot's; a sequence's from its shots) and fps (the project's, or the entity's override). Has `shot` like the publish HDAs: in a sequence scene it loads that shot's layers, or with `_seq` the sequence's. It builds no prims itself.
+     - In the working scene, loaded layers sit below everything authored in the chain (unlike the published root layer's order), so a live preview can differ from the published shot where two departments change the same prim (e.g. fx hiding an animated prop). Final renders therefore use `sw_render`'s *Published shot* source.
+   - `sw_render` (**work in progress**: works for simple renders, far from done): LOP, wraps a USD Render ROP (Karma, one husk run per frame) → `media/render_<name>/v###/` with its own counter, always one `.exr` per frame. Name parm `render_name` (without `render_`). Default range: *Shot Range*. `source`: *Live stage* (default: the node's input, for iterating) or *Published shot*: renders the target's root layer (`<shot>.usd`, or `<seq>.usd` for `_seq`) with husk, so what is rendered is exactly what is published. The input is ignored then, and the render settings come from the published stack (`/Render/rendersettings` by default, authored by lighting). How the HDA runs husk on the file is decided when implementing (not yet verified in Houdini). On finalize both record `usd_files` (§8.3): the layers of the rendered stage (`GetUsedLayers()`, payloads loaded) that lie in a `publish/` version folder.
    - Common parms: the name parm (a text field whose menu lists the existing names, `hda_name_menu`; changing it calls `hda_name_changed`), `range` (*Current Frame*; *Shot Range*: the target entity's frames, else the scene's range; *Custom Range*: `frame_range`, default `$FSTART`/`$FEND`; read by the inner ROP through `hda_range`), `version`, `new_version` (button), `shot` (sequence scenes), `comment`, `output` (the path, Python expression `hda_output`), `execute` (button) and `info`: a read-only multi-line field (Python expression `hda_info`) with the version count, the latest version (files, frame range, date, user, comment, source scene), for USD the pointer's current version, and whether the node's version is new or will be overwritten; *Export* re-evaluates it afterwards. The inner ROP's path is `chs("../output")` and its post-render script calls `hda_post_render`, which finalizes the version with `source` = the scene (`version.json`; for USD also the pointer and root layer). The code tells the kinds apart by the `product` / `layer` / `render_name` parm.
    - **Write To and Load from Disk** (`sw_publish_sop`, `sw_publish_lop`): `target` = *Publish* (default, as above) or *Task cache*: the same name, versioning and output, but into the scene's task cache, `<task>/cache/<name>/v###/<entity>_<name>_v###[.####].<ext>`, with nothing finalized (no `version.json`, no pointer or root layer: caches stay free-form, §4); `shot` and `comment` are hidden then, and in a sequence scene it is the `_seq` task's cache. Both also have `choose` (*Choose…*, disabled for the task cache): the picker below in publish mode, for an existing product/layer of an entity the scene publishes to (its own asset or shot; in a sequence scene one of the sequence's shots, which also sets `shot`). It sets the name and switches to its highest version; typing a name works as before. The name menu lists the caches of the task instead of the products. `load` (*Load from Disk*) outputs the written version instead of the input: a File SOP (SOP) or a Sublayer LOP (LOP) reading `chs("../output")`, behind a Switch.
    - **Importing** (both have `choose` (*Choose…*: the picker below), `entity` (empty = the scene's own entity, else an asset, shot or `seq:<name>`; a plain text field), `reload`, `path` (Python expression), `info`):
      - `sw_import_sop`: SOP, no input. `product` (menu of the entity's products), `version` (`latest` = the newest version with files, or a `v###`), `file` (one of the version's files/sequences, default the first; sequences follow the current frame). A File SOP reads `chs("../path")`, so `.bgeo.sc`, `.vdb`, `.obj` and `.abc` (packed) load.
-     - `sw_import_lop`: LOP, optional input. `layer` (empty = the entity's entry/root layer `<entity>.usd`, or a layer), `version` (`current` = the layer's pointer, or a `v###` = that version's main file), `mode` (*Auto*: reference an asset, sublayer a shot or sequence; *Reference*; *Sublayer*), `primpath` (reference destination, default `/<entity>`). A Sublayer and a Reference LOP behind a Switch.
+     - `sw_import_lop`: LOP, optional input. `layer` (empty = the entity's entry/root layer `<entity>.usd`, or a layer), `version` (`current` = the layer's pointer, or a `v###` = that version's main file), `mode` (*Auto*: reference an asset, sublayer a shot or sequence; *Reference*; *Sublayer*), `primpath` (reference destination, default `/<entity>` in an asset scene, `/world/assets/<entity>` in a shot or sequence scene, matching `structure.usd`). A Sublayer and a Reference LOP behind a Switch.
    - **Picker** (`gui/pick.py`, called by `import_choose` and, in publish mode with the allowed entities, `publish_choose`; publish mode hides the checkboxes, chooses no version, refuses other entities, and accepts an entity without choosing a product: then only `shot` is set and the typed name stays, e.g. for a shot that has no products yet). It lists only the matching kind: products for the SOP HDAs, USD layers for the LOP HDAs: the §12 browser as a dialog over Houdini, in its Products view (no view switch or project menu), opened on the node's current entity, product/layer and pinned version. Select an entity and a product (or USD layer), then OK or double-click the product, a version or a file. *Always load the latest version* (USD: *Use the layer's current version*), on unless the node pins a version, writes `latest`/`current`; unticked, the selected version is pinned. For USD, *All layers of the entity* (on when the node's layer is empty) chooses the entry layer. A product of the wrong kind is refused. The entity is written as `""` when it is the scene's own, so a copied scene keeps importing its own entity.
-   - `sw_publish_sop`, `sw_publish_lop`, `sw_import_sop` and `sw_import_lop` are built by `integrations/houdini/build_hdas.py` (hython), from ordinary nodes, so they can be edited by hand; rebuilding replaces such edits. `sw_render` is built by hand.
-7. **Sequence scenes:** in a scene under `_seq/`, publishes and renders target one shot: the node's `shot` parm, else the context option `SW_SHOT` (`sw.set_shot`, or *Edit → Context Options*). Without a shot they raise an error. Output lands in **that shot's** `publish/` / `media/`.
-8. **USD stack convention:** a department's scene loads the pointer layers below its own in `usd_layer_order` and publishes only its own layer. `sw.layers_below(layer)` returns the existing ones, strongest first, as `$JOB/…` paths for a Sublayer LOP (stored env-relative, §7.1).
-9. **Tests:** `tests/houdini/` runs the integration inside every installed hython (`uv run pytest -m houdini`), loading the package from a temporary `HOUDINI_PACKAGE_DIR`, and uses each of the five HDAs (Karma render included). UI-only parts (menu, shelf, panel, dialogs, clipboard) are checked by hand.
+   - `sw_publish_sop`, `sw_publish_lop`, `sw_asset_start`, `sw_shot_start`, `sw_import_sop` and `sw_import_lop` are built by `integrations/houdini/build_hdas.py` (hython), from ordinary nodes, so they can be edited by hand; rebuilding replaces such edits. `sw_render` is built by hand.
+7. **Sequence scenes:** in a scene under `_seq/`, publishes and renders target one shot: the node's `shot` parm, else the context option `SW_SHOT` (`sw.set_shot`, or *Edit → Context Options*). Without a shot they raise an error. Output lands in **that shot's** `publish/` / `media/`. The `shot` menu (and `SW_SHOT`) also offers `_seq` = *(the sequence itself)*: the output then lands in the sequence's own `publish/` / `media/`, for genuinely sequence-wide products such as a lighting rig, which every shot root layer of the sequence picks up as its weakest layer (§9.2).
+8. **USD stack convention:** a department's scene loads the layers published from other scenes with `sw_shot_start` (`load`) and publishes only its own layers. Assets come in through `sw_import_lop` as references to their component (`<asset>.usd`). Everything a published layer references must already be published (§9.2 item 6): cache heavy data with `sw_publish_sop` in *Publish* mode, not into the task cache, before it goes into a USD layer.
+9. **Tests:** `tests/houdini/` runs the integration inside every installed hython (`uv run pytest -m houdini`), loading the package from a temporary `HOUDINI_PACKAGE_DIR`, and uses each of the seven HDAs (Karma render included). UI-only parts (menu, shelf, panel, dialogs, clipboard) are checked by hand.
 
 ### 13.3 Nuke (current)
 
@@ -760,7 +908,7 @@ scheinwerk/
 | 1 — Core | §6, §8, §9, §10 + tests | Round-trip and versioning tests pass on Mac + Windows CI. |
 | 2 — CLI | §11 | A test project can be set up and used through `sw` alone. |
 | 3 — GUI | §12 | Finder/Explorer is no longer needed to find or create files. |
-| 4 — Houdini | §13.2 | Asset → lookdev → shot → lighting → render loop with no hand-typed paths, including a `_seq` multi-shot hip. |
+| 4 — Houdini | §13.2, and the USD asset and shot structure of §9.2–§9.3 | Starting from *Asset Start* / *Shot Start*: asset (geo and mtl layers with variants, one scene) → shot (layout, anim, lighting in one scene, fx in another) → a final render of the published shot, in a 25 fps project, with no hand-typed paths, including a `_seq` multi-shot hip that publishes to the sequence itself. |
 | 5 — Nuke | §13.3 | A Phase-4 render is comped without typing a path. |
 | 6 — Blender | §13.4 | Blender workfiles are versioned and opened like the rest. |
 | 7 — Later | launcher (per-project OCIO), deep `doctor`, thumbnails, asset library, rename tool | When actually missed. |

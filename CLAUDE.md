@@ -39,7 +39,7 @@ Dependency direction: `core` ← `cli` ← `gui` ← `dcc`. Never the other way 
 ## Non-negotiable rules
 
 1. **`core/` imports only the Python standard library.** No Qt, no `hou`/`nuke`/`bpy`, no `pxr`, no third-party packages. A test enforces this.
-2. **Never persist an absolute path inside a project.** Stored paths (JSON, generated USD, anything written to disk) are root-relative POSIX strings with `/`, or file-relative (USD), or env-relative (`$SW_ROOT/...`). Absolute paths are allowed only at runtime and in machine-local user settings.
+2. **Never persist an absolute path inside a project.** Stored paths (JSON, generated USD, anything written to disk) are root-relative POSIX strings with `/`, or file-relative (USD), or env-relative (`$SW_ROOT/...`). Absolute paths are allowed only at runtime and in machine-local user settings. Published files reference only other published files (never `work/` or `cache/`), and every USD layer core writes carries the entity's fps (spec §9.2).
 3. **The folder tree is the truth.** Don't cache tree state, don't add registries or indexes, don't add JSON fields the spec doesn't define. Rescan instead.
 4. **Context comes from the path.** Use `Context.from_path()`. Never pass state around that the path could provide, and never trust filename prefixes for context (folders only).
 5. **Python 3.11.** No syntax or stdlib APIs newer than 3.11.
