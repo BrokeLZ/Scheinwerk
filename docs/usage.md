@@ -461,6 +461,24 @@ A typical project:
 
 In the working scene, loaded layers sit *below* everything authored in the chain. The published shot orders them by `usd_layer_order` instead. So where two departments change the same prim (fx hiding an animated prop), a live preview can differ from the published shot. The final render from the published shot is always right.
 
+### Overriding the sequence in a shot
+
+A sequence can publish layers too (from a scene under `_seq/`), for everything its shots share: the set's `layout`, a lighting rig in `lgt`. In a shot, the sequence's layers sit below *all* of the shot's layers ([spec §9.2](spec.md)), so whatever the shot authors wins. That gives you two ways to work in a shot:
+
+- **Add to the sequence.** In the shot's scene, tick *Sequence* on *Shot Start* (on by default) so you see what the sequence published. Below it, add new prims and change existing ones: a new light, a Light LOP in *Edit* mode for a brighter key, a transform on a prop. *Publish USD* writes only your changes (the Layer Break in *Shot Start* keeps the sequence's prims out), as overrides on top of the sequence. When the sequence republishes, the shot picks that up, except for what it overrode.
+- **Replace what the sequence has.** USD can't delete a prim that a weaker layer defines; a stronger layer can only switch it off. Use a **Prune** LOP with *Method: Deactivate* on the prim (or its group), then build your own. That writes `active = false` into the shot's layer: the prim and everything under it are gone from the stage and the render, in this shot only. Deactivate rather than *Make Invisible*: an invisible prim is still loaded, and lights may still light the scene.
+
+Deactivating a prim takes everything under it with it, so give each setup its own group instead of putting lights straight into `/world/lights`:
+
+```text
+/world/lights/seq_rig/key, fill, rim     the sequence's lgt
+/world/lights/shot_rig/...               one shot's own lgt
+```
+
+A shot that wants its own lighting deactivates `/world/lights/seq_rig` and builds `shot_rig` next to it. A shot that only adds keeps `seq_rig` and adds to it or next to it. The same goes for every layer: remove a sequence prop in one shot by deactivating `/world/props/chair` in the shot's `layout`; move it by giving it a new transform in `layout` or `anim`. Keep things a shot might want to replace under one group in the sequence, e.g. its fx under `/world/fx/seq_smoke`.
+
+A shot can't leave out the sequence as a whole: the sequence's root layer bundles all its layers, so you would lose its `layout` along with its lights. Deactivate the groups you don't want instead.
+
 ### Publishing with the HDAs
 
 Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render* (all Scheinwerk HDAs are in the Tab menu's **Scheinwerk** submenu):
