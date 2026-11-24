@@ -344,14 +344,23 @@ def set_shot(shot: str) -> None:
 # apart by its name parm: product (SOP), layer (LOP) or render_name (render). The two
 # publish HDAs have a `target` menu: publish (products, finalized) or cache (the scene's
 # task cache, <task>/cache/<name>/v###/, never finalized: caches are free-form, spec §4).
+# sw_publish_lop also has product: a USD file published as a product, not as a layer of
+# the entity's stack; a layer that sublayers it carries it into the stack (spec §13.2).
 
-TARGET_PUBLISH, TARGET_CACHE = 0, 1  # the publish HDAs' `target` menu
+TARGET_PUBLISH, TARGET_CACHE, TARGET_PRODUCT = 0, 1, 2  # the publish HDAs' `target` menu
 ASSET_LAYERS = ("geo", "mtl")  # layers with prim conventions (spec §9.3)
 
 
 def is_cache(node: hou.Node) -> bool:
     """Whether a publish HDA writes into the task cache instead of publishing."""
     return bool(node.parm("target")) and node.evalParm("target") == TARGET_CACHE
+
+
+def is_usd_product(node: hou.Node) -> bool:
+    """Whether sw_publish_lop publishes a USD product instead of a layer."""
+    return bool(node.parm("layer") and node.parm("target")) and (
+        node.evalParm("target") == TARGET_PRODUCT
+    )
 
 
 RANGE_CURRENT, RANGE_SHOT, RANGE_CUSTOM = 0, 1, 2  # the HDAs' `range` menu
@@ -374,6 +383,8 @@ def _hda(node: hou.Node) -> tuple[Product, str, bool]:
         parm, kind, ext, frames = "layer", "layer", "usd", False
         name = node.evalParm("layer")
         folder = _task().cache_dir if is_cache(node) else entity.path / "publish" / "_usd"
+        if is_usd_product(node):
+            parm, kind, folder = "name", "product", entity.path / "publish"
     elif node.parm("render_name"):
         parm, kind, ext, frames = "render_name", "media", "exr", True
         name = node.evalParm("render_name") and f"render_{node.evalParm('render_name')}"
@@ -418,6 +429,8 @@ def hda_load_files(node: hou.Node) -> list[Path]:
     published layers below this one (mtl: the geo; a shot layer: the weaker layers and the
     structure), then the written file. So the stage doesn't lose what came before, and
     nothing upstream cooks (spec §13.2)."""
+    if is_usd_product(node):
+        return [Path(hda_output(node))]  # a part: merged into the chain, not stacked
     entity = _node_entity(node)
     if entity.type != "asset":
         write_structure(entity.project.root / "shared" / "usd" / "structure.usd")
@@ -442,6 +455,8 @@ def hda_name_menu(node: hou.Node) -> list[str]:
         return []  # unsaved scene: a menu must not raise
     if is_cache(node):
         names = [f.name for f in entity.project.scan(_task().cache_dir)]
+    elif is_usd_product(node):
+        names = [p.name for p in entity.products(usd=False)]
     elif node.parm("layer"):
         names = [p.name for p in entity.products(usd=True)]
         order = (
@@ -540,8 +555,8 @@ def publish_choose(node: hou.Node) -> None:
         return
     own = project.entity_at(ctx)
     allowed = project.shots(own.name) if own.type == "sequence" else [own]
-    usd = node.parm("layer") is not None
-    name_parm = "layer" if usd else "product"
+    usd = node.parm("layer") is not None and not is_usd_product(node)
+    name_parm = "layer" if node.parm("layer") else "product"
     shot = node.evalParm("shot") if node.parm("shot") else ""
     choice = pick(
         current_file(),
@@ -627,7 +642,7 @@ def _unordered_layer(node: hou.Node) -> str:
     """A shot or sequence layer that isn't in usd_layer_order sorts below all of them
     (spec §9.2): the root layer and Load from Disk stack it under layout. Mostly a typo,
     e.g. `light` for `lgt`."""
-    if not node.parm("layer") or is_cache(node):
+    if not node.parm("layer") or is_cache(node) or is_usd_product(node):
         return ""
     entity = _node_entity(node)
     order = entity.project.setting("usd_layer_order")
@@ -640,7 +655,12 @@ def _unordered_layer(node: hou.Node) -> str:
 def _prims_outside_asset(node: hou.Node) -> list[str]:
     """Root prims of the incoming stage other than the asset's, for the asset layers geo
     and mtl (spec §9.3: everything an asset layer authors lives under /<asset>)."""
-    if not node.parm("layer") or is_cache(node) or node.evalParm("layer") not in ASSET_LAYERS:
+    if (
+        not node.parm("layer")
+        or is_cache(node)
+        or is_usd_product(node)
+        or node.evalParm("layer") not in ASSET_LAYERS
+    ):
         return []
     entity = _node_entity(node)
     inputs = [i for i in node.inputs() if i is not None]
@@ -667,7 +687,7 @@ def hda_post_render(node: hou.Node) -> None:
         return
     product, ext, _ = _hda(node)
     version = hda_version(node)
-    main = product.file_path(version, ext).name if ext == "usd" else None
+    main = product.file_path(version, ext).name if product.usd else None
     finalize(
         product.path / format_version(version),
         source=current_file(),

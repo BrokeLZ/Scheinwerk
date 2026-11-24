@@ -519,6 +519,28 @@ All three work the same way:
 
 **Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range. Pick `_seq` (*the sequence itself*) for things the whole sequence shares, like a lighting rig or a set: they go into the sequence's own `publish/`, and every shot's root layer picks them up as its weakest layer.
 
+### Building a layer from cached parts
+
+Big layers, like an environment in `layout`, are often built from heavy pieces you don't want to recompute: a terrain, several scatters. Cache each piece as its own USD file and merge them into the layer:
+
+```text
+Shot Start ─────────────────────────────────────────────────────────┐
+terrain (SOPs, material) → Publish USD: USD product terrain_base, Load from Disk ─┤
+scatter → Instancer LOP → Publish USD: USD product grass_a, Load from Disk ───────┤
+scatter → Instancer LOP → Publish USD: USD product rocks_b, Load from Disk ───────┤
+                                                                    Merge
+                                                                      │
+                                                   set dressing, cameras, …
+                                                                      │
+                                                     Publish USD: layer layout
+```
+
+Set **Write To** to *Publish (USD product)* on each part and give it a name (`terrain_base`, `grass_a`). It is published like any product (`publish/terrain_base/v003/`), with versions, but it doesn't become a layer of its own. With *Load from Disk* on, its branch reads the file instead of cooking. After the Merge, the `layout` publish writes the parts as sublayers of `layout.usd` (paths to the part files, not their contents), so the shot gets them through `layout`. Name the parts freely, as many as you like.
+
+- A new version of a part reaches the shots with the next `layout` publish, which points at that version. *Publish All USD* does both, parts first.
+- What `layout` itself authors after the Merge is stronger than the parts, so it can move or hide something in a part.
+- Layer Break After doesn't apply to a USD product (it is hidden): the layer has to see the part to include it.
+
 ### Caching
 
 Heavy in-between data (simulations, checkpoints you won't import on their own) shouldn't clutter your products. Both publish HDAs can write into the **scene's task cache folder** instead: set **Write To** to *Task cache*.

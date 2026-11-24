@@ -447,6 +447,42 @@ for rel in (
     assert rel in used, used
 assert not any(u.endswith(("fx.usd", "sq010_0010.usd", "hero.usd", "payload.usd")) for u in used)
 
+# --- parts: USD products, cached on their own, merged into a layer --------------------
+terrain = stage.createNode("cube")
+terrain.parm("primpath").set("/world/env/terrain_base")
+part = create(stage, "sw_publish_lop", terrain)
+part.parm("target").set("product")
+part.parm("layer").set("terrain_base")
+assert part.node("layer_break_after").evalParm("input") == 0, "a part is never broken off"
+assert part.evalParm("info").startswith("Product  terrain_base"), part.evalParm("info")
+part.parm("execute").pressButton()
+part_dir = shot.path / "publish/terrain_base/v001"
+assert names(part_dir) == ["sq010_0010_terrain_base_v001.usd", "version.json"]
+assert not (shot_usd / "terrain_base").exists()  # no pointer, not in the root layer
+assert "terrain_base" not in (shot_usd / "sq010_0010.usd").read_text(encoding="utf-8")
+items = part.parm("layer").menuItems()  # the shot's products, not its layers or hints
+assert "terrain_base" in items and "layout" not in items and "lgt" not in items, items
+part.parm("load").set(1)  # just the file: this branch is merged, not stacked
+files = [Path(x.realPath).name for x in part.stage().GetLayerStack() if x.realPath]
+assert files == ["sq010_0010_terrain_base_v001.usd"], files
+merge = stage.createNode("merge")
+merge.setInput(0, main_start)
+merge.setInput(1, part)
+pub_layout2 = create(stage, "sw_publish_lop", merge)
+pub_layout2.parm("layer").set("layout")
+pub_layout2.parm("new_version").pressButton()
+pub_layout2.parm("execute").pressButton()
+layout2 = Sdf.Layer.FindOrOpen(str(shot_usd / "layout/v002/sq010_0010_layout_v002.usd"))
+expected = "../../../terrain_base/v001/sq010_0010_terrain_base_v001.usd"
+assert list(layout2.subLayerPaths) == [expected], list(layout2.subLayerPaths)
+assert not layout2.GetPrimAtPath("/world/env/terrain_base"), "referenced, not copied"
+assert not layout2.GetPrimAtPath("/world/fx"), "Shot Start's layers stay out"
+pointer = shot_usd / "layout/layout.usd"
+assert "./v002/" in pointer.read_text(encoding="utf-8")
+Sdf.Layer.FindOrOpen(str(pointer)).Reload()  # this session opened it at v001 above
+shot_stage = Usd.Stage.Open(str(shot_usd / "sq010_0010.usd"))
+assert shot_stage.GetPrimAtPath("/world/env/terrain_base").GetTypeName() == "Cube"
+
 # --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
 tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}
 for name in (

@@ -172,13 +172,18 @@ def wire_export(rop, path_parm: str) -> None:
     rop.parm("postrender").set(f"{IMPORT}; sw.hda_post_render(hou.pwd().parent())")
 
 
-def publish_parms(name_parm: str, ext: bool, range_default: int) -> list:
+def publish_parms(name_parm: str, ext: bool, range_default: int, usd: bool = False) -> list:
     """Write To, the name, versioning, Shot/Comment (publishing only), Load from Disk,
-    Output, Export and Info."""
+    Output, Export and Info. `usd`: sw_publish_lop, which also publishes USD products.
+    New menu entries go last: a scene stores the entry's index."""
+    items, labels = ["publish", "cache"], ["Publish (products)", "Task cache (not published)"]
+    if usd:
+        labels[0] = "Publish (USD layer)"
+        items.append("product")
+        labels.append("Publish (USD product, e.g. a part of a layer)")
     target = hou.MenuParmTemplate(
-        "target", "Write To", menu_items=("publish", "cache"),
-        menu_labels=("Publish (products)", "Task cache (not published)"), default_value=0,
-    )  # fmt: skip
+        "target", "Write To", menu_items=items, menu_labels=labels, default_value=0
+    )
     shot = hou.StringParmTemplate(
         "shot", "Shot", 1, default_value=("",),
         item_generator_script=f"{IMPORT}\nreturn sw.shot_menu()",
@@ -256,14 +261,18 @@ def build_publish_lop() -> None:
     after = net.createNode("switch", "layer_break_after")
     after.setInput(0, switch)
     after.setInput(1, brk)
-    after.parm("input").setExpression('ch("../layer_break")', hou.exprLanguage.Hscript)
+    # never for a USD product: the layer that merges it in must still write the sublayer
+    after.parm("input").setExpression(
+        'ch("../layer_break") && ch("../target") != 2', hou.exprLanguage.Hscript
+    )
     output = net.node("output0") or net.createNode("output", "output0")
     output.setInput(0, after)
     output.setDisplayFlag(True)
     net.layoutChildren()
-    parms = publish_parms("layer", ext=False, range_default=0)
+    parms = publish_parms("layer", ext=False, range_default=0, usd=True)
     layer_break = hou.ToggleParmTemplate("layer_break", "Layer Break After", default_value=True)
     layer_break.setHelp("Publishes further down this chain write only what is added after it.")
+    layer_break.setConditional(hou.parmCondType.HideWhen, "{ target == product }")
     parms.insert(parms.index(next(p for p in parms if p.name() == "load")) + 1, layer_break)
     save_asset(net, "sw_publish_lop", "Scheinwerk Publish USD", "LOP_subnet", parms, (1, 1))
 
