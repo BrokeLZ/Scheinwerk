@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from scheinwerk.core.errors import ScheinwerkError
+from scheinwerk.core.project import Project
 from scheinwerk.core.usd_pointer import (
     STRUCTURE,
+    asset_prim_path,
     read_pointer,
     write_component,
     write_pointer,
@@ -128,15 +130,39 @@ def test_root_layer_without_layers(tmp_path: Path) -> None:
 
 
 def test_structure_layer_text(tmp_path: Path) -> None:
+    # Everything spatial under /world; groups that hold assets are Xforms with kind group,
+    # cameras and lights Scopes; render settings outside /world (spec §9.2).
     path = tmp_path / "shared/usd/structure.usd"
     write_structure(path)
     assert text(path) == STRUCTURE
-    assert STRUCTURE.startswith('#usda 1.0\n\ndef Xform "world" (\n    kind = "group"\n)\n')
-    for prim in ('def Xform "assets"', 'def Xform "env"', 'def Xform "fx"'):
-        assert prim in STRUCTURE
-    for scope in ("cameras", "lights", "Render"):
-        assert f'def Scope "{scope}"\n{{\n}}\n' in STRUCTURE
-    assert "framesPerSecond" not in STRUCTURE  # no time samples, no time metadata
+    groups = "".join(
+        f'\n    def Xform "{name}" (\n        kind = "group"\n    )\n    {{\n    }}\n'
+        for name in ("chars", "props", "env", "fx")
+    )
+    scopes = "".join(
+        f'\n    def Scope "{name}"\n    {{\n    }}\n' for name in ("cameras", "lights")
+    )
+    expected = (
+        '#usda 1.0\n\ndef Xform "world" (\n    kind = "group"\n)\n{'
+        + groups
+        + scopes
+        + '}\n\ndef Scope "Render"\n{\n}\n'
+    )
+    assert expected == STRUCTURE
+
+
+@pytest.mark.parametrize(
+    ("category", "prim"),
+    [
+        ("char", "/world/chars/hero"),
+        ("prop", "/world/props/hero"),
+        ("env", "/world/env/hero"),
+        ("vehicles", "/world/props/hero"),  # any other category
+        (None, "/world/props/hero"),  # no category
+    ],
+)
+def test_asset_prim_path(proj: Project, category: str | None, prim: str) -> None:
+    assert asset_prim_path(proj.create_asset("hero", category=category)) == prim
 
 
 def test_structure_layer_is_never_overwritten(tmp_path: Path) -> None:

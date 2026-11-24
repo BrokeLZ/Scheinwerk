@@ -236,14 +236,15 @@ def build_publish_lop() -> None:
 
 
 def build_asset_start() -> None:
-    """The asset skeleton: /<asset>, /<asset>/geo/{render,proxy} with purposes,
-    /<asset>/mtl (spec §9.3). Prim paths come from the read-only `asset` parm."""
+    """The asset skeleton: the Xform /<asset> (the only transformable prim), Scopes
+    /<asset>/geo/{render,proxy} with purposes and /<asset>/mtl (spec §9.3). Prim paths
+    come from the read-only `asset` parm."""
     net = hou.node("/stage").createNode("subnet", "sw_asset_start")
     root = '/`chs("../asset")`'
     previous = None
     for node_name, paths, prim_type in (
         ("asset", root, "UsdGeomXform"),
-        ("geo", f"{root}/geo {root}/geo/render {root}/geo/proxy", "UsdGeomXform"),
+        ("geo", f"{root}/geo {root}/geo/render {root}/geo/proxy", "UsdGeomScope"),
         ("mtl", f"{root}/mtl", "UsdGeomScope"),
     ):
         prim = net.createNode("primitive", node_name)

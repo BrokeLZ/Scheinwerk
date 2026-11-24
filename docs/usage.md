@@ -93,7 +93,7 @@ docs/                  spec.md (contract) and usage.md (this guide)
 - **Version folders** count up from the highest existing `v###`, even an empty one, so a number is never reused. Empty versions are skipped when looking for "latest".
 - **USD.** Publishing a layer updates its pointer (`publish/_usd/<layer>/<layer>.usd`) and the entity's entry/root layer (`publish/_usd/<entity>.usd`):
   - An **asset**'s `hero.usd` is a *component*: one prim `/hero` whose payload `payload.usd` holds the asset's layers, `mtl` over `geo`. Referencing it loads nothing heavy until the payload is loaded.
-  - A **shot**'s `sq010_0010.usd` lists its layers strongest first (`usd_layer_order` from `scheinwerk.json`, then the rest A–Z), then the sequence's root layer if it has one, else the project's **structure layer** `shared/usd/structure.usd` (`/world/assets`, `/world/env`, `/world/fx`, `/cameras`, `/lights`, `/Render`).
+  - A **shot**'s `sq010_0010.usd` lists its layers strongest first (`usd_layer_order` from `scheinwerk.json`, then the rest A–Z), then the sequence's root layer if it has one, else the project's **structure layer** `shared/usd/structure.usd` (`/world/chars`, `/world/props`, `/world/env`, `/world/fx`, `/world/cameras`, `/world/lights`, and `/Render` for render settings).
   - Every layer Scheinwerk writes carries the entity's fps, so USD doesn't retime 25 fps work.
   - A published layer may only point at other **published** files (never into `work/` or `cache/`): publish textures as a product (`publish/textures/v###/`) and sim data with *Scheinwerk Publish* before a USD layer uses them. `sw doctor` checks this.
 
@@ -449,14 +449,14 @@ They point at the **highest existing version** (v001 if there is none). For a ne
 
 Two HDAs (Tab: *Scheinwerk Asset Start*, *Scheinwerk Shot Start*) go at the top of a LOP network:
 
-- **Asset Start** (`sw_asset_start`, asset scenes only) builds the asset's skeleton: `/hero` (Xform), `/hero/geo/render` and `/hero/geo/proxy` (with the render and proxy purposes) and `/hero/mtl` (Scope). Put your geometry under `/hero/geo/render` (and a light stand-in under `proxy`), materials under `/hero/mtl`. The skeleton is published with the first layer, `geo`.
+- **Asset Start** (`sw_asset_start`, asset scenes only) builds the asset's skeleton: the Xform `/hero` (the only transformable prim) and the Scopes `/hero/geo`, `/hero/geo/render` and `/hero/geo/proxy` (with the render and proxy purposes) and `/hero/mtl`. Put your geometry under `/hero/geo/render` (and a light stand-in under `proxy`), materials under `/hero/mtl`. The skeleton is published with the first layer, `geo`.
 - **Shot Start** (`sw_shot_start`, shot and sequence scenes) loads what other scenes published, behind a Layer Break, so none of it is published again from here: the structure layer (or the sequence's root layer, which ends with it), plus the layers ticked in **Load**. Tick the layers made in *other* scenes: `fx` in the main scene, `layout` and `anim` in an fx scene. *Sequence* (on by default) also loads the sequence's own layers. In a sequence scene, *Shot* picks whose layers to load (`_seq`: the sequence's). **Info** lists what is loaded, strongest first; **Reload** re-reads the files after another scene published. Frame range and fps come from the scene (see above).
 
 A typical project:
 
 1. **Asset**, one scene: *Asset Start* → geometry → *Publish USD* `geo` → materials → *Publish USD* `mtl` → *Publish All USD*. Each publish ends with a Layer Break, so `mtl` holds only the materials and their bindings. Variants are yours to author (e.g. *Add Variant*): a `model` variant set for `geo` and a `look` set for `mtl`, on `/hero`. Bind materials on `/hero/geo/render` or higher, so model variants keep them.
 2. **Shot, fx scene**: *Shot Start* (load `layout`, `anim`) → the effect under `/world/fx` → *Publish USD* `fx`.
-3. **Shot, main scene**: *Shot Start* (load `fx`) → *Import USD* the assets (they land under `/world/assets/<asset>`) → *Publish USD* `layout` → animation → *Publish USD* `anim` → cameras under `/cameras`, lights under `/lights`, render settings → *Publish USD* `lgt` → *Publish All USD*.
+3. **Shot, main scene**: *Shot Start* (load `fx`) → *Import USD* the assets (they land in their group: `/world/chars/hero`, `/world/props/chair`, `/world/env/forest`) → *Publish USD* `layout` → animation → *Publish USD* `anim` → cameras under `/world/cameras`, lights under `/world/lights`, render settings → *Publish USD* `lgt` → *Publish All USD*. Houdini's Camera and Light LOPs default to `/cameras/$OS` and `/lights/$OS`: change that to `/world/cameras/$OS` and `/world/lights/$OS`, so they follow a transform on `/world`.
 4. **Final render**: *Scheinwerk Render* with *Source: Published shot*.
 
 In the working scene, loaded layers sit *below* everything authored in the chain. The published shot orders them by `usd_layer_order` instead. So where two departments change the same prim (fx hiding an animated prop), a live preview can differ from the published shot. The final render from the published shot is always right.
@@ -533,7 +533,7 @@ It reads `.bgeo.sc`, `.vdb`, `.obj` and `.abc` (Alembic arrives as packed geomet
 - *Entity*: as above.
 - *Layer*: empty means **all layers** of the entity (its entry/root layer `hero.usd`; in the picker: *All layers of the entity*), or one layer (`geo`, `lgt`, …).
 - *Version*: `current` (default: the layer's pointer, so *Set as current* and new publishes are followed) or a `v###` to pin one.
-- *Mode*: *Auto* references an asset and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. *Primitive Path* (where a reference lands) defaults to `/hero` in an asset scene and to `/world/assets/hero` in a shot or sequence scene, as the structure layer expects. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (*Asset Start* does that).
+- *Mode*: *Auto* references an asset and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. *Primitive Path* (where a reference lands) defaults to `/hero` in an asset scene; in a shot or sequence scene to the asset's group in the structure layer: `/world/chars/…` for category `char`, `/world/env/…` for `env`, `/world/props/…` for `prop`, any other category and assets without one. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (*Asset Start* does that).
 
 When you save the result with *Scheinwerk Publish USD*, the *Use Relative Paths* processor turns these paths into relative ones.
 
@@ -551,7 +551,7 @@ hython integrations/houdini/build_hdas.py sw_publish_sop    # just one
 (`hython` is in Houdini's `bin` folder.) It saves `.hdalc` with Indie, `.hdanc` with Apprentice, `.hda` otherwise. **Running it again rebuilds from scratch and replaces hand edits**, so after editing one by hand, either keep doing that or move the change into the script. Inside:
 - *Scheinwerk Publish*: the input → a ROP Geometry Output `export` (set up as described below) and a Switch `load_from_disk` (input 0 = the input, input 1 = a File SOP `load` reading `chs("../output")`, switched by `ch("../load")`) → Null `OUT`.
 - *Scheinwerk Publish USD*: the same with a USD ROP `export` and a Sublayer LOP `load`, then a Switch `layer_break_after` (input 1 = a Layer Break `break`, switched by `ch("../layer_break")`) → `output0`.
-- *Scheinwerk Asset Start*: Primitive LOPs `asset`, `geo` (three paths) and `mtl` (Scope), whose paths start with `/`chs("../asset")``, then Configure Primitive LOPs `render_purpose` and `proxy_purpose` → `output0`. The `asset` parm is `SW.start_asset(hou.pwd())`.
+- *Scheinwerk Asset Start*: Primitive LOPs `asset` (Xform), `geo` (three paths) and `mtl` (both Scope), whose paths start with `/`chs("../asset")``, then Configure Primitive LOPs `render_purpose` and `proxy_purpose` → `output0`. The `asset` parm is `SW.start_asset(hou.pwd())`.
 - *Scheinwerk Shot Start*: a Sublayer LOP `load` with 12 file slots, each `SW.shot_start_file(hou.pwd().parent(), N)` and enabled while that isn't empty (slot 1 is the weakest), → a Layer Break → `output0`.
 - *Scheinwerk Render*: the input and a Sublayer LOP `published` (`SW.render_root(hou.pwd().parent())`) → a Switch `source` (`ch("../source")`) → a USD Render ROP `render` (Karma; *Render Settings* `/Render/rendersettings` for the published source). The input also goes straight to `output0`.
 - *Scheinwerk Import*: a File SOP `load` reading `chs("../path")` → Null `OUT`.

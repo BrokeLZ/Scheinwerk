@@ -19,43 +19,25 @@ ASSET_LAYER_ORDER = ("mtl", "geo")
 # File-relative path from any shot or sequence root layer to the project's structure layer.
 STRUCTURE_FROM_ROOT = "../../../../../shared/usd/structure.usd"
 
-STRUCTURE = """#usda 1.0
+# Asset groups under /world by category; other categories and none go to props (§9.2).
+ASSET_GROUPS = {"char": "chars", "prop": "props", "env": "env"}
 
-def Xform "world" (
-    kind = "group"
-)
-{
-    def Xform "assets" (
-        kind = "group"
-    )
-    {
-    }
 
-    def Xform "env" (
-        kind = "group"
-    )
-    {
-    }
+def _structure() -> str:
+    """Everything spatial under /world: Xform groups that hold assets and fx (kind group,
+    so assets below them stay models), Scopes for cameras and lights. /Render (render
+    settings) is not spatial and stays outside."""
+    group = '    def Xform "{}" (\n        kind = "group"\n    )\n    {{\n    }}\n'
+    scope = '    def Scope "{}"\n    {{\n    }}\n'
+    body = "\n".join(
+        [*(group.format(n) for n in ("chars", "props", "env", "fx")),
+         *(scope.format(n) for n in ("cameras", "lights"))]
+    )  # fmt: skip
+    world = f'def Xform "world" (\n    kind = "group"\n)\n{{\n{body}}}\n'
+    return f'#usda 1.0\n\n{world}\ndef Scope "Render"\n{{\n}}\n'
 
-    def Xform "fx" (
-        kind = "group"
-    )
-    {
-    }
-}
 
-def Scope "cameras"
-{
-}
-
-def Scope "lights"
-{
-}
-
-def Scope "Render"
-{
-}
-"""
+STRUCTURE = _structure()
 
 
 def write_pointer(
@@ -137,6 +119,11 @@ def write_entity_layers(entity: Entity) -> None:
         for shot in entity.project.shots(entity.name):
             if (shot.path / "publish" / "_usd" / f"{shot.name}.usd").is_file():
                 write_entity_layers(shot)
+
+
+def asset_prim_path(asset: Entity) -> str:
+    """Where a shot references an asset: /world/<group>/<asset> (spec §9.2)."""
+    return f"/world/{ASSET_GROUPS.get(asset.category or '', 'props')}/{asset.name}"
 
 
 def read_pointer(path: Path) -> str | None:

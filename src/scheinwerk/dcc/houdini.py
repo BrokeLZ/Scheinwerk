@@ -27,7 +27,7 @@ from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import finalize
 from scheinwerk.core.templates import format_version, parse_version, validate_name
-from scheinwerk.core.usd_pointer import write_structure
+from scheinwerk.core.usd_pointer import asset_prim_path, write_structure
 from scheinwerk.core.versions import Product, Version, file_sequences
 
 log = logging.getLogger("scheinwerk.houdini")
@@ -944,14 +944,16 @@ def import_mode(node: hou.Node) -> int:
 
 
 def import_prim(node: hou.Node) -> str:
-    """Default prim path for a reference: /<entity> in an asset scene, else
-    /world/assets/<entity>, matching the structure layer (spec §9.2)."""
+    """Default prim path for a reference: /<entity> in an asset scene; in a shot or
+    sequence scene an asset's group in the structure layer, /world/chars/hero (§9.2)."""
     try:
-        project, ctx = _project_and_context()
-        name = _import_entity(node).name
+        _, ctx = _project_and_context()
+        entity = _import_entity(node)
     except ScheinwerkError:
         return "/import"
-    return f"/{name}" if ctx.entity_type == "asset" else f"/world/assets/{name}"
+    if ctx.entity_type == "asset" or entity.type != "asset":
+        return f"/{entity.name}"
+    return asset_prim_path(entity)
 
 
 def import_info(node: hou.Node) -> str:

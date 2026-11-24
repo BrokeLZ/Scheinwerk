@@ -303,7 +303,8 @@ start = stage.createNode("sw_asset_start", exact_type_name=True)
 assert start.evalParm("asset") == "hero"
 s = start.stage()
 assert s.GetPrimAtPath("/hero").GetTypeName() == "Xform" and not s.GetPrimAtPath("/hero").GetKind()
-assert s.GetPrimAtPath("/hero/mtl").GetTypeName() == "Scope"
+for scope in ("/hero/geo", "/hero/geo/render", "/hero/geo/proxy", "/hero/mtl"):
+    assert s.GetPrimAtPath(scope).GetTypeName() == "Scope", scope
 for purpose in ("render", "proxy"):
     prim = s.GetPrimAtPath(f"/hero/geo/{purpose}")
     assert UsdGeom.Imageable(prim).GetPurposeAttr().Get() == purpose, purpose
@@ -352,7 +353,8 @@ fx_start = stage.createNode("sw_shot_start", exact_type_name=True)
 assert fx_start.evalParm("load") == "sequence"
 loaded = fx_start.evalParm("info").splitlines()
 assert loaded == ["Loaded (strongest first):", "shared/usd/structure.usd"], loaded
-assert fx_start.stage().GetPrimAtPath("/world/assets") and fx_start.stage().GetPrimAtPath("/Render")
+for prim in ("/world/chars", "/world/cameras", "/world/lights", "/Render"):
+    assert fx_start.stage().GetPrimAtPath(prim), prim
 ball = stage.createNode("sphere")
 ball.setInput(0, fx_start)
 ball.parm("primpath").set("/world/fx/ball")
@@ -362,7 +364,7 @@ pub_fx.parm("execute").pressButton()
 fx_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "fx/v001/sq010_0010_fx_v001.usd"))
 assert fx_layer.GetPrimAtPath("/world/fx/ball")
 assert fx_layer.GetPrimAtPath("/world").specifier == Sdf.SpecifierOver  # structure not republished
-assert not fx_layer.GetPrimAtPath("/cameras")
+assert not fx_layer.GetPrimAtPath("/world/cameras")
 
 hou.hipFile.clear(suppress_save_prompt=True)
 hou.hipFile.save((shot.path / "lgt/main/work/sq010_0010_lgt_main_v001.hip").as_posix())
@@ -374,12 +376,13 @@ assert "shots/sq010/sq010_0010/publish/_usd/fx/fx.usd" in main_start.evalParm("i
 assert main_start.stage().GetPrimAtPath("/world/fx/ball")
 hero_in = create(stage, "sw_import_lop", main_start)
 hero_in.parm("entity").set("hero")
-assert hero_in.evalParm("primpath") == "/world/assets/hero"  # matches the structure layer
-assert hero_in.stage().GetPrimAtPath("/world/assets/hero/geo/render/body")
+assert hero_in.evalParm("primpath") == "/world/chars/hero"  # a char: matches the structure
+assert hero_in.stage().GetPrimAtPath("/world/chars/hero/geo/render/body")
 pub_layout = create(stage, "sw_publish_lop", hero_in)
 pub_layout.parm("layer").set("layout")
 cam = stage.createNode("camera")
 cam.setInput(0, pub_layout)
+cam.parm("primpath").set("/world/cameras/$OS")
 cam.parmTuple("t").set((0, 0, 5))
 settings = stage.createNode("karmarenderproperties")
 settings.setInput(0, cam)
@@ -396,10 +399,11 @@ assert (
 ), root
 assert "    startTimeCode = 1001\n    endTimeCode = 1002\n" in root
 layout_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "layout/v001/sq010_0010_layout_v001.usd"))
-refs = layout_layer.GetPrimAtPath("/world/assets/hero").referenceList.GetAddedOrExplicitItems()
+refs = layout_layer.GetPrimAtPath("/world/chars/hero").referenceList.GetAddedOrExplicitItems()
 assert refs and refs[0].assetPath.startswith("../"), refs  # file-relative, to hero.usd
 lgt_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "lgt/v001/sq010_0010_lgt_v001.usd"))
-assert not lgt_layer.GetPrimAtPath("/world/assets/hero"), "layout isn't published again"
+assert not lgt_layer.GetPrimAtPath("/world/chars/hero"), "layout isn't published again"
+assert lgt_layer.GetPrimAtPath("/world/cameras/camera1")
 
 # --- the final render, from the published shot; it records what it used
 final = create(stage, "sw_render", pub_lgt)
