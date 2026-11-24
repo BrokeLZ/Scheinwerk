@@ -15,6 +15,7 @@ from scheinwerk.core.errors import (
     ScheinwerkError,
 )
 from scheinwerk.core.project import DEFAULTS, Project
+from scheinwerk.core.usd_pointer import STRUCTURE
 from tests.conftest import touch
 
 # --- create / find ----------------------------------------------------------
@@ -28,6 +29,8 @@ def test_create_writes_config_and_top_folders(tmp_path: Path) -> None:
     assert p.config == data
     for sub in ["assets", "shots", "shared/hooks", "shared/templates", "io/in", "io/out"]:
         assert (p.root / sub).is_dir(), sub
+    structure = p.root / "shared/usd/structure.usd"
+    assert structure.read_text(encoding="utf-8") == STRUCTURE  # spec §9.2
 
 
 def test_create_with_settings(tmp_path: Path) -> None:
@@ -292,6 +295,25 @@ def test_asset_frames(proj: Project) -> None:
     assert hero.frames is None
     hero.set_frames(1, 100)
     assert hero.frames == (1, 100)
+
+
+@pytest.mark.parametrize(
+    ("override", "fps"),
+    [(None, 24), (25, 25), (23.976, 23.976), (0, 24), (-5, 24), ("25", 24), (True, 24)],
+)
+def test_entity_fps(proj: Project, override: object, fps: float) -> None:
+    # entity.json may override the project's fps (spec §8.2); nonsense is ignored.
+    shot = proj.create_shot("sq010_0010")
+    if override is not None:
+        data = {"schema": 1, "fps": override}
+        (shot.path / "entity.json").write_text(json.dumps(data), encoding="utf-8")
+    assert shot.fps == fps
+
+
+def test_sequence_fps_is_the_project_fps(tmp_path: Path) -> None:
+    p = Project.create(tmp_path / "show", "show", fps=25)
+    assert p.create_sequence("sq010").fps == 25
+    assert p.create_asset("hero").fps == 25
 
 
 # --- resolving entities by name (spec §11) ----------------------------------

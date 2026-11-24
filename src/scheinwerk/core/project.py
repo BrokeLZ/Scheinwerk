@@ -21,6 +21,7 @@ from scheinwerk.core.errors import (
 from scheinwerk.core.fileio import check_free, exists_ci, read_json, write_json
 from scheinwerk.core.hooks import post_create
 from scheinwerk.core.templates import shot_sequence, validate_name
+from scheinwerk.core.usd_pointer import write_structure
 
 MARKER = "scheinwerk.json"
 
@@ -55,7 +56,7 @@ DEFAULTS: dict = {
 DEFAULT_CATEGORIES = ("char", "prop", "env")
 
 # Folders Project.create makes next to scheinwerk.json.
-LAYOUT = ("assets", "shots", "shared/hooks", "shared/templates", "io/in", "io/out")
+LAYOUT = ("assets", "shots", "shared/hooks", "shared/templates", "shared/usd", "io/in", "io/out")
 
 # Folder contents that mark an asset (as opposed to a category), besides a template department.
 ASSET_MARKERS = ("entity.json", "publish", "media")
@@ -110,6 +111,7 @@ class Project:
         config = {"schema": 1, "name": name, **copy.deepcopy(DEFAULTS), **settings}
         for sub in LAYOUT:
             (folder / sub).mkdir(parents=True, exist_ok=True)
+        write_structure(folder / "shared" / "usd" / "structure.usd")
         write_json(folder / MARKER, config)
         return cls(folder, config)
 

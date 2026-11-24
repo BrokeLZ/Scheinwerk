@@ -594,7 +594,7 @@ context.path() -> Path                      # inverse of from_path
 
 # entities.py  (thin, path-backed; no cached state)
 Entity  # Asset, Shot and Sequence are one class told apart by .type ("asset" | "shot" | "sequence")
-    .project .type .name .category .sequence .path .valid .frames
+    .project .type .name .category .sequence .path .valid .frames .fps   # fps: entity.json override, else the project's
     .set_frames(start, end)                 # assets and shots; sequences derive theirs; rewrites a shot's root layer if it exists
     .departments() -> list[Department]
     .department(name) -> Department
@@ -660,6 +660,7 @@ write_pointer(path, target_rel, *, fps, default_prim=None) -> None   # default_p
 write_root_layer(path, sublayers, *, fps, frames=None) -> None       # shot/sequence root, payload.usd; frames: shots
 write_component(path, asset, *, fps) -> None                         # <asset>.usd, payload ./payload.usd
 write_structure(path) -> None                                        # shared/usd/structure.usd, only when missing
+write_entity_layers(entity) -> None                                  # an entity's entry/root layers from its pointers (§9.2 item 4)
 read_pointer(path) -> str | None
 ```
 

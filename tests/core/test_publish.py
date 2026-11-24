@@ -19,6 +19,7 @@ from scheinwerk.core.publish import (
     next_usd,
     set_current,
 )
+from scheinwerk.core.usd_pointer import STRUCTURE
 from scheinwerk.core.versions import Product
 from tests.conftest import touch
 
@@ -52,7 +53,7 @@ def test_next_publish(hero: Entity) -> None:
 
 def test_next_media_and_usd(hero: Entity, shot: Entity) -> None:
     assert next_media(shot, "render_beauty") == shot.path / "media/render_beauty/v001"
-    assert next_usd(hero, "asset") == hero.path / "publish/_usd/asset/v001"
+    assert next_usd(hero, "geo") == hero.path / "publish/_usd/geo/v001"
 
 
 def test_next_publish_invalid_name(hero: Entity) -> None:
@@ -131,6 +132,8 @@ def test_finalize_missing_folder(hero: Entity) -> None:
 
 # --- USD --------------------------------------------------------------------
 
+STRUCTURE_REL = "../../../../../shared/usd/structure.usd"
+
 
 def publish_layer(entity: Entity, layer: str, files: tuple[str, ...] | None = None) -> Path:
     vdir = next_usd(entity, layer)
@@ -139,50 +142,81 @@ def publish_layer(entity: Entity, layer: str, files: tuple[str, ...] | None = No
     return vdir
 
 
-def test_usd_finalize_writes_pointer_and_entry_layer(hero: Entity) -> None:
-    vdir = publish_layer(hero, "asset")
+def test_usd_finalize_writes_pointer_payload_and_component(hero: Entity) -> None:
+    vdir = publish_layer(hero, "geo")
     finalize(vdir)
     usd = hero.path / "publish/_usd"
-    assert text(usd / "asset/asset.usd") == (
+    assert text(usd / "geo/geo.usd") == (
         '#usda 1.0\n(\n    defaultPrim = "hero"\n'
-        "    subLayers = [@./v001/hero_asset_v001.usd@]\n)\n"
+        "    framesPerSecond = 24\n    timeCodesPerSecond = 24\n"
+        "    subLayers = [@./v001/hero_geo_v001.usd@]\n)\n"
     )
-    assert text(usd / "hero.usd") == (
-        '#usda 1.0\n(\n    defaultPrim = "hero"\n    subLayers = [\n'
-        "        @./asset/asset.usd@\n    ]\n)\n"
+    assert text(usd / "payload.usd") == (
+        "#usda 1.0\n(\n    framesPerSecond = 24\n    timeCodesPerSecond = 24\n"
+        "    subLayers = [\n        @./geo/geo.usd@\n    ]\n)\n"
     )
+    entry = text(usd / "hero.usd")
+    assert entry.startswith('#usda 1.0\n(\n    defaultPrim = "hero"\n')
+    assert 'kind = "component"' in entry
+    assert "payload = @./payload.usd@</hero>" in entry
+    assert "subLayers" not in entry
     assert info(vdir)["schema"] == 1
 
 
 def test_new_version_moves_the_pointer(proj: Project, hero: Entity) -> None:
-    finalize(publish_layer(hero, "asset"))
-    finalize(publish_layer(hero, "asset"))
-    layer = Product(proj, hero.path / "publish/_usd/asset")
+    finalize(publish_layer(hero, "geo"))
+    finalize(publish_layer(hero, "geo"))
+    layer = Product(proj, hero.path / "publish/_usd/geo")
     assert layer.current().number == 2
 
 
-def test_shot_root_layer_order(shot: Entity) -> None:
-    # usd_layer_order = lgt, fx, anim, layout; others after it A-Z.
+def test_asset_layer_order(hero: Entity) -> None:
+    # mtl, then geo, then any other asset layer A-Z (spec §9.3); usd_layer_order is ignored.
+    for layer in ["fx", "geo", "cfx", "mtl", "lgt"]:
+        finalize(publish_layer(hero, layer))
+    payload = text(hero.path / "publish/_usd/payload.usd")
+    order = ["./mtl/", "./geo/", "./cfx/", "./fx/", "./lgt/"]
+    assert [payload.index(o) for o in order] == sorted(payload.index(o) for o in order)
+
+
+def test_shot_root_layer(proj: Project, shot: Entity) -> None:
+    # usd_layer_order = lgt, fx, anim, layout; others after it A-Z; structure last.
     for layer in ["layout", "zzz", "lgt", "cfx", "fx"]:
         finalize(publish_layer(shot, layer))
-    root = text(shot.path / "publish/_usd/sq010_0010.usd")
-    assert "defaultPrim" not in root
-    assert root == (
-        "#usda 1.0\n(\n    subLayers = [\n"
+    usd = shot.path / "publish/_usd"
+    assert text(usd / "sq010_0010.usd") == (
+        "#usda 1.0\n(\n"
+        "    framesPerSecond = 24\n    timeCodesPerSecond = 24\n"
+        "    startTimeCode = 1001\n    endTimeCode = 1096\n"
+        "    subLayers = [\n"
         "        @./lgt/lgt.usd@,\n"
         "        @./fx/fx.usd@,\n"
         "        @./layout/layout.usd@,\n"
         "        @./cfx/cfx.usd@,\n"
-        "        @./zzz/zzz.usd@\n"
+        "        @./zzz/zzz.usd@,\n"
+        f"        @{STRUCTURE_REL}@\n"
         "    ]\n)\n"
     )
+    assert "defaultPrim" not in text(usd / "lgt/lgt.usd")
+    assert (usd / STRUCTURE_REL).resolve() == (proj.root / "shared/usd/structure.usd").resolve()
 
 
-def test_asset_layers_use_the_same_order(hero: Entity) -> None:
-    for layer in ["mtl", "geo", "fx"]:
-        finalize(publish_layer(hero, layer))
-    root = text(hero.path / "publish/_usd/hero.usd")
-    assert root.index("./fx/") < root.index("./geo/") < root.index("./mtl/")
+def test_root_layer_writes_a_missing_structure_layer(proj: Project, shot: Entity) -> None:
+    structure = proj.root / "shared/usd/structure.usd"
+    assert not structure.exists()  # an older project
+    finalize(publish_layer(shot, "lgt"))
+    assert text(structure) == STRUCTURE
+    structure.write_text("#usda 1.0\n# mine\n", encoding="utf-8")
+    finalize(publish_layer(shot, "lgt"))
+    assert text(structure) == "#usda 1.0\n# mine\n"  # never overwritten
+
+
+def test_shot_without_frames_has_no_time_range(proj: Project) -> None:
+    shot = proj.create_shot("sq020_0010")
+    finalize(publish_layer(shot, "lgt"))
+    root = text(shot.path / "publish/_usd/sq020_0010.usd")
+    assert "framesPerSecond = 24" in root
+    assert "TimeCode =" not in root
 
 
 def test_sequence_root_layer(proj: Project) -> None:
@@ -190,57 +224,133 @@ def test_sequence_root_layer(proj: Project) -> None:
     finalize(publish_layer(seq, "lgt"))
     usd = proj.root / "shots/sq010/_seq/publish/_usd"
     assert "subLayers = [@./v001/sq010_lgt_v001.usd@]" in text(usd / "lgt/lgt.usd")
-    assert "defaultPrim" not in text(usd / "sq010.usd")
+    assert "defaultPrim" not in text(usd / "lgt/lgt.usd")
+    assert text(usd / "sq010.usd") == (
+        "#usda 1.0\n(\n    framesPerSecond = 24\n    timeCodesPerSecond = 24\n"
+        "    subLayers = [\n"
+        "        @./lgt/lgt.usd@,\n"
+        f"        @{STRUCTURE_REL}@\n"
+        "    ]\n)\n"
+    )
+
+
+def test_new_sequence_root_is_added_to_shot_roots(proj: Project, shot: Entity) -> None:
+    other = proj.create_shot("sq010_0020")  # never published: gets no root layer
+    finalize(publish_layer(shot, "lgt"))
+    root = shot.path / "publish/_usd/sq010_0010.usd"
+    assert STRUCTURE_REL in text(root)
+    finalize(publish_layer(proj.entity("seq:sq010"), "layout"))
+    assert text(root).endswith(
+        "        @./lgt/lgt.usd@,\n        @../../../_seq/publish/_usd/sq010.usd@\n    ]\n)\n"
+    )
+    assert STRUCTURE_REL not in text(root)  # the sequence root layer brings it
+    assert not (other.path / "publish/_usd/sq010_0020.usd").exists()
+
+
+def test_layers_use_the_entity_fps(proj: Project, hero: Entity, shot: Entity) -> None:
+    data = json.loads(text(shot.path / "entity.json"))
+    (shot.path / "entity.json").write_text(json.dumps({**data, "fps": 23.976}), encoding="utf-8")
+    finalize(publish_layer(shot, "lgt"))
+    finalize(publish_layer(hero, "geo"))
+    for path in [shot.path / "publish/_usd/lgt/lgt.usd", shot.path / "publish/_usd/sq010_0010.usd"]:
+        assert "    framesPerSecond = 23.976\n    timeCodesPerSecond = 23.976\n" in text(path)
+    for name in ["geo/geo.usd", "payload.usd", "hero.usd"]:
+        assert "    timeCodesPerSecond = 24\n" in text(hero.path / "publish/_usd" / name)
+
+
+def test_project_fps(tmp_path: Path) -> None:
+    p = Project.create(tmp_path / "show", "show", fps=25)
+    seq = p.create_sequence("sq010")
+    finalize(publish_layer(seq, "lgt"))
+    assert "timeCodesPerSecond = 25" in text(seq.path / "publish/_usd/sq010.usd")
+
+
+def test_set_frames_rewrites_the_shot_root_layer(proj: Project, shot: Entity) -> None:
+    unpublished = proj.create_shot("sq010_0020")
+    unpublished.set_frames(1001, 1010)
+    assert not (unpublished.path / "publish").exists()
+    finalize(publish_layer(shot, "lgt"))
+    shot.set_frames(1001, 1050)
+    assert "    startTimeCode = 1001\n    endTimeCode = 1050\n" in text(
+        shot.path / "publish/_usd/sq010_0010.usd"
+    )
 
 
 def test_main_file_prefers_recommended_name(hero: Entity) -> None:
-    vdir = publish_layer(hero, "asset", ("geo.usd", "hero_asset_v001.usd", "mtl.usdc"))
+    vdir = publish_layer(hero, "geo", ("a.usd", "hero_geo_v001.usd", "hero_geo_v001.1001.usd"))
     finalize(vdir)
-    assert "@./v001/hero_asset_v001.usd@" in text(hero.path / "publish/_usd/asset/asset.usd")
+    assert "@./v001/hero_geo_v001.usd@" in text(hero.path / "publish/_usd/geo/geo.usd")
 
 
 @pytest.mark.parametrize("name", ["layer.usda", "layer.usdc"])
 def test_single_usd_file_any_suffix(hero: Entity, name: str) -> None:
-    finalize(publish_layer(hero, "asset", (name,)))
-    assert f"@./v001/{name}@" in text(hero.path / "publish/_usd/asset/asset.usd")
+    finalize(publish_layer(hero, "geo", (name,)))
+    assert f"@./v001/{name}@" in text(hero.path / "publish/_usd/geo/geo.usd")
 
 
 def test_ambiguous_main_file_writes_nothing(hero: Entity) -> None:
-    vdir = publish_layer(hero, "asset", ("a.usd", "b.usd"))
+    vdir = publish_layer(hero, "geo", ("a.usd", "b.usd"))
     with pytest.raises(ScheinwerkError, match="main_file"):
         finalize(vdir)
     assert not (vdir / "version.json").exists()
-    assert not (hero.path / "publish/_usd/asset/asset.usd").exists()
+    assert not (hero.path / "publish/_usd/geo/geo.usd").exists()
+    assert not (hero.path / "publish/_usd/hero.usd").exists()
     finalize(vdir, main_file="b.usd")
-    assert "@./v001/b.usd@" in text(hero.path / "publish/_usd/asset/asset.usd")
+    assert "@./v001/b.usd@" in text(hero.path / "publish/_usd/geo/geo.usd")
 
 
 def test_main_file_missing(hero: Entity) -> None:
-    vdir = publish_layer(hero, "asset", ("a.usd",))
+    vdir = publish_layer(hero, "geo", ("a.usd",))
     with pytest.raises(NotFound):
         finalize(vdir, main_file="nope.usd")
 
 
 def test_no_usd_file(hero: Entity) -> None:
-    vdir = publish_layer(hero, "asset", ("notes.txt",))
+    vdir = publish_layer(hero, "geo", ("notes.txt",))
     with pytest.raises(NotFound):
         finalize(vdir)
 
 
 def test_set_current_rolls_back(proj: Project, hero: Entity) -> None:
-    v1 = publish_layer(hero, "asset")
+    v1 = publish_layer(hero, "geo")
     finalize(v1)
-    finalize(publish_layer(hero, "asset"))
+    finalize(publish_layer(hero, "geo"))
     set_current(v1)
-    layer = Product(proj, hero.path / "publish/_usd/asset")
+    layer = Product(proj, hero.path / "publish/_usd/geo")
     assert layer.current().number == 1
-    assert "@./asset/asset.usd@" in text(hero.path / "publish/_usd/hero.usd")
+    assert "@./geo/geo.usd@" in text(hero.path / "publish/_usd/payload.usd")
 
 
 def test_set_current_needs_usd(hero: Entity) -> None:
     vdir = next_publish(hero, "pants")
     with pytest.raises(ParseError):
         set_current(vdir)
+
+
+# --- usd_files (renders, spec §8.3) ------------------------------------------
+
+
+def test_finalize_records_usd_files(proj: Project, hero: Entity, shot: Entity) -> None:
+    geo = publish_layer(hero, "geo")
+    lgt = publish_layer(shot, "lgt")
+    vdir = next_media(shot, "render_beauty")
+    used = [lgt / "sq010_0010_lgt_v001.usd", geo / "hero_geo_v001.usd", geo / "hero_geo_v001.usd"]
+    finalize(vdir, usd_files=used)
+    assert info(vdir)["usd_files"] == [
+        "assets/hero/publish/_usd/geo/v001/hero_geo_v001.usd",
+        "shots/sq010/sq010_0010/publish/_usd/lgt/v001/sq010_0010_lgt_v001.usd",
+    ]
+    finalize(vdir, comment="edited")  # re-finalizing without usd_files keeps them
+    assert len(info(vdir)["usd_files"]) == 2
+    finalize(vdir, usd_files=[])
+    assert info(vdir)["usd_files"] == []
+
+
+def test_usd_files_outside_the_project_are_refused(tmp_path: Path, shot: Entity) -> None:
+    vdir = next_media(shot, "render_beauty")
+    with pytest.raises(NotInProject):
+        finalize(vdir, usd_files=[tmp_path / "elsewhere/x.usd"])
+    assert not (vdir / "version.json").exists()
 
 
 # --- ingest -----------------------------------------------------------------

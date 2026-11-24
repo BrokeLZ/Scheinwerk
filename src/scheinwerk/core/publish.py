@@ -15,7 +15,7 @@ from scheinwerk.core.fileio import copy_new, read_json, write_json
 from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.templates import format_version, validate_extension
-from scheinwerk.core.usd_pointer import write_pointer, write_root_layer
+from scheinwerk.core.usd_pointer import write_entity_layers, write_pointer
 from scheinwerk.core.versions import Product
 
 USD_SUFFIXES = (".usd", ".usda", ".usdc")
@@ -42,15 +42,18 @@ def finalize(
     comment: str = "",
     main_file: str | None = None,
     dcc: str | None = None,
+    usd_files: Iterable[PathLike] | None = None,
 ) -> None:
     """Write version.json and, for USD, point the layer at this version (pointer last).
 
-    Re-finalizing (e.g. to edit the comment) keeps `created`, `user`, an earlier
-    `source` and any unknown keys.
+    `usd_files`: the published USD files a render used (spec §8.3). Re-finalizing (e.g. to
+    edit the comment) keeps `created`, `user`, an earlier `source`/`usd_files` and any
+    unknown keys.
     """
     ctx, project = _version_context(version_dir)
     vdir = ctx.path()
     main = _main_usd_file(ctx, main_file) if ctx.usd else None  # fail before writing anything
+    used = None if usd_files is None else sorted({project.rel(f) for f in usd_files})
 
     data = read_json(vdir / "version.json") or {}
     data.setdefault("schema", 1)
@@ -66,6 +69,8 @@ def finalize(
     data.setdefault("user", _user())
     data.setdefault("created", datetime.now().astimezone().isoformat(timespec="seconds"))
     data["comment"] = comment
+    if used is not None:
+        data["usd_files"] = used
     write_json(vdir / "version.json", data)
 
     if main is not None:
@@ -178,15 +183,13 @@ def _main_usd_file(ctx: Context, main_file: str | None) -> str:
 
 
 def _write_pointers(project: Project, ctx: Context, main: str) -> None:
-    """Layer pointer, then the entry/root layer that lists every layer pointer."""
+    """Layer pointer, then the entry/root layers that list every layer pointer."""
     vdir = ctx.path()
-    write_pointer(vdir.parent / f"{ctx.product}.usd", f"./{vdir.name}/{main}", ctx.entity)
-    usd_dir = vdir.parent.parent
-    layers = [d.name for d in project.scan(usd_dir) if (d / f"{d.name}.usd").is_file()]
-    order = project.setting("usd_layer_order")
-    layers.sort(key=lambda n: (order.index(n) if n in order else len(order), n))
-    write_root_layer(
-        usd_dir / f"{ctx.entity}.usd",
-        [f"./{n}/{n}.usd" for n in layers],
-        default_prim=ctx.entity if ctx.entity_type == "asset" else None,
+    entity = project.entity_at(ctx)
+    write_pointer(
+        vdir.parent / f"{ctx.product}.usd",
+        f"./{vdir.name}/{main}",
+        fps=entity.fps,
+        default_prim=entity.name if entity.type == "asset" else None,
     )
+    write_entity_layers(entity)

@@ -91,7 +91,13 @@ docs/                  spec.md (contract) and usage.md (this guide)
 
 - **Assets vs. categories.** Every asset Scheinwerk creates gets an `entity.json`. A folder under `assets/` without `entity.json`, `publish/`, `media/` or a department is treated as a category. If you make asset folders by hand, add an `entity.json` containing `{"schema": 1}` (or a department folder) so they aren't mistaken for categories.
 - **Version folders** count up from the highest existing `v###`, even an empty one, so a number is never reused. Empty versions are skipped when looking for "latest".
-- **USD.** Publishing a layer updates its pointer (`publish/_usd/<layer>/<layer>.usd`) and the entity's entry/root layer (`publish/_usd/<entity>.usd`), which lists every layer strongest first: `usd_layer_order` from `scheinwerk.json`, then the rest A–Z.
+- **USD.** Publishing a layer updates its pointer (`publish/_usd/<layer>/<layer>.usd`) and the entity's entry/root layer (`publish/_usd/<entity>.usd`):
+  - An **asset**'s `hero.usd` is a *component*: one prim `/hero` whose payload `payload.usd` holds the asset's layers, `mtl` over `geo`. Referencing it loads nothing heavy until the payload is loaded.
+  - A **shot**'s `sq010_0010.usd` lists its layers strongest first (`usd_layer_order` from `scheinwerk.json`, then the rest A–Z), then the sequence's root layer if it has one, else the project's **structure layer** `shared/usd/structure.usd` (`/world/assets`, `/world/env`, `/world/fx`, `/cameras`, `/lights`, `/Render`).
+  - Every layer Scheinwerk writes carries the entity's fps, so USD doesn't retime 25 fps work.
+  - A published layer may only point at other **published** files (never into `work/` or `cache/`): publish textures as a product (`publish/textures/v###/`) and sim data with *Scheinwerk Publish* before a USD layer uses them. `sw doctor` checks this.
+
+  The full rules: [spec §9.2–9.3](spec.md#92-usd-layer).
 
 Full layout: [spec §4](spec.md#4-on-disk-layout).
 
@@ -286,6 +292,7 @@ empty version  /Users/you/projects/myshow/assets/char/hero/publish/pants/v001
 | `conflict copy` | Synology made a `…Conflict…` copy. | Compare with the original, keep one. |
 | `absolute path` | A `.usd`/`.usda`/`.nk` contains a drive letter, `/Users/`, `/Volumes/` or `\\server` path (the first one is shown). | Re-export with relative paths (USD ROP: *Use Relative Paths*; Nuke: `[getenv SW_ROOT]/…`). `cache/` is not checked. |
 | `empty version` | A version folder has no files (an export that failed or was cancelled). | Delete it or export into it. |
+| `unpublished reference` | A published `.usd`/`.usda` points into a task's `work/` or `cache/` folder (the first path is shown). Those change and `cache/` isn't synced. | Publish the file first (textures as a product, sims with *Scheinwerk Publish*), point the layer there and publish it again. |
 
 It exits with 1 when it finds anything, so it can run in scripts.
 

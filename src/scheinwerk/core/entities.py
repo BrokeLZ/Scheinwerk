@@ -18,6 +18,7 @@ from scheinwerk.core.templates import (
     validate_extension,
     validate_name,
 )
+from scheinwerk.core.usd_pointer import write_entity_layers
 from scheinwerk.core.versions import Product
 
 if TYPE_CHECKING:
@@ -92,6 +93,17 @@ class Entity:
         data = read_json(self.path / "entity.json") or {"schema": 1}
         data["frames"] = [start, end]
         write_json(self.path / "entity.json", data)
+        if (self.path / "publish" / "_usd" / f"{self.name}.usd").is_file():
+            write_entity_layers(self)  # the shot root layer's time range (spec §9.2)
+
+    @property
+    def fps(self) -> int | float:
+        """`entity.json`'s override, else the project's (spec §8.2)."""
+        if self.type != "sequence":
+            fps = (read_json(self.path / "entity.json") or {}).get("fps")
+            if isinstance(fps, int | float) and not isinstance(fps, bool) and fps > 0:
+                return fps
+        return self.project.setting("fps")
 
     # --- departments --------------------------------------------------------
 

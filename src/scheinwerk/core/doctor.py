@@ -11,8 +11,9 @@ from scheinwerk.core.errors import InvalidName
 from scheinwerk.core.project import Project
 from scheinwerk.core.templates import validate_name
 
-KINDS = ("invalid name", "conflict copy", "absolute path", "empty version")
+KINDS = ("invalid name", "conflict copy", "absolute path", "empty version", "unpublished reference")
 CHECKED_SUFFIXES = (".usd", ".usda", ".nk")
+USD_SUFFIXES = (".usd", ".usda")
 
 # A drive letter, /Users/, /Volumes/ or a UNC path (spec §7.1), not glued to a preceding
 # letter or digit (so `https://` and `./x/Users/` don't count), up to the next separator.
@@ -20,6 +21,10 @@ _ABSOLUTE = re.compile(
     rb"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|/Users/|/Volumes/|\\\\[A-Za-z0-9])"
     rb"[^\x00-\x20\"'@\]\)<>|]{0,200}"
 )
+# A path through a task's work/ or cache/ folder (reserved names, so such a segment is always
+# a task folder), from that segment on; the part before it is added by _find (spec §9.2).
+_UNPUBLISHED = re.compile(rb"[/\\](?:work|cache)[/\\][^\x00-\x20\"'@\]\)<>|]{0,200}")
+_PATH_BEFORE = re.compile(rb"[^\x00-\x20\"'@\[\(<>|=]{0,200}$")
 _CHUNK = 1024 * 1024
 
 
@@ -36,6 +41,7 @@ def check(project: Project) -> list[Issue]:
         *_conflict_copies(project),
         *_absolute_paths(project),
         *_empty_versions(project),
+        *_unpublished_references(project),
     ]
     return sorted(issues, key=lambda i: (KINDS.index(i.kind), i.path.as_posix()))
 
@@ -81,22 +87,37 @@ def _conflict_copies(project: Project) -> Iterator[Issue]:
 def _absolute_paths(project: Project) -> Iterator[Issue]:
     for entry in _walk(project, project.root):
         if entry.suffix in CHECKED_SUFFIXES and entry.is_file():
-            found = _find_absolute(entry)
+            found = _find(entry, _ABSOLUTE)
             if found is not None:
                 yield Issue("absolute path", entry, found)
 
 
-def _find_absolute(path: Path) -> str | None:
-    """First absolute path in the file, read in chunks so huge binary .usd files are fine."""
+def _unpublished_references(project: Project) -> Iterator[Issue]:
+    for entry in _walk(project, project.root):
+        rel = entry.relative_to(project.root).parts
+        if entry.suffix in USD_SUFFIXES and "publish" in rel and entry.is_file():
+            found = _find(entry, _UNPUBLISHED, before=_PATH_BEFORE)
+            if found is not None:
+                yield Issue("unpublished reference", entry, found)
+
+
+def _find(
+    path: Path, pattern: re.Pattern[bytes], before: re.Pattern[bytes] | None = None
+) -> str | None:
+    """First match in the file, read in chunks so huge binary .usd files are fine. `before`
+    extends the match to the left (matched against the text just before it)."""
     carry = b""
     with path.open("rb") as f:
         while True:
             chunk = f.read(_CHUNK)
             buffer = carry + chunk
-            match = _ABSOLUTE.search(buffer)
+            match = pattern.search(buffer)
             at_end = not chunk
             if match and (match.end() < len(buffer) or at_end):
-                return match[0].decode("latin-1")
+                start = match.start()
+                if before is not None:
+                    start -= len(before.search(buffer, max(start - 200, 0), start)[0])
+                return buffer[start : match.end()].decode("latin-1")
             if at_end:
                 return None
             keep = min(match.start() if match else len(buffer), max(len(buffer) - 512, 0))
