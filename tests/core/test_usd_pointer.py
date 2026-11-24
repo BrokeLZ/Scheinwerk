@@ -130,8 +130,8 @@ def test_root_layer_without_layers(tmp_path: Path) -> None:
 
 
 def test_structure_layer_text(tmp_path: Path) -> None:
-    # Everything spatial under /world; groups that hold assets are Xforms with kind group,
-    # cameras and lights Scopes; render settings outside /world (spec §9.2).
+    # Everything spatial under /world, all Xforms: groups that hold assets with kind group,
+    # cameras and lights without (they hold no models); render settings outside (§9.2).
     path = tmp_path / "shared/usd/structure.usd"
     write_structure(path)
     assert text(path) == STRUCTURE
@@ -139,13 +139,11 @@ def test_structure_layer_text(tmp_path: Path) -> None:
         f'\n    def Xform "{name}" (\n        kind = "group"\n    )\n    {{\n    }}\n'
         for name in ("chars", "props", "env", "fx")
     )
-    scopes = "".join(
-        f'\n    def Scope "{name}"\n    {{\n    }}\n' for name in ("cameras", "lights")
-    )
+    plain = "".join(f'\n    def Xform "{name}"\n    {{\n    }}\n' for name in ("cameras", "lights"))
     expected = (
         '#usda 1.0\n\ndef Xform "world" (\n    kind = "group"\n)\n{'
         + groups
-        + scopes
+        + plain
         + '}\n\ndef Scope "Render"\n{\n}\n'
     )
     assert expected == STRUCTURE
