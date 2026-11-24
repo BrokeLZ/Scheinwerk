@@ -493,7 +493,7 @@ All three work the same way:
 
   It updates when you change the name or version and after an export. Changes made outside Houdini show up the next time it updates.
 
-  It also warns when something would go wrong: a scene at the wrong fps (*Publish USD* refuses to export then), or, for the asset layers `geo` and `mtl`, prims outside `/<asset>` (e.g. a material library at `/materials`), which a shot referencing the asset would never see.
+  It also warns when something would go wrong: a scene at the wrong fps (*Publish USD* refuses to export then), or, for the asset layers `geo` and `mtl`, prims outside `/<asset>` (e.g. a material library at `/materials`), which a shot referencing the asset would never see, or a shot or sequence layer whose name isn't in `usd_layer_order` (e.g. `light` instead of `lgt`): such a layer sorts below all the listed ones, so it would end up under `layout` in the shot and in *Load from Disk*.
 
 **Publish USD extras.** **Layer Break After** (on by default) passes the stage on through a Layer Break, so a *Publish USD* further down the same chain writes only what was added after this one. That is what lets one scene publish `geo` then `mtl`, or `layout`, `anim` and `lgt`.
 

@@ -402,7 +402,10 @@ cam.parmTuple("t").set((0, 0, 5))
 settings = stage.createNode("karmarenderproperties")
 settings.setInput(0, cam)
 pub_lgt = create(stage, "sw_publish_lop", settings)
+pub_lgt.parm("layer").set("light")  # not in usd_layer_order: would sort below layout
+assert "light isn't in usd_layer_order" in pub_lgt.evalParm("info"), pub_lgt.evalParm("info")
 pub_lgt.parm("layer").set("lgt")
+assert "usd_layer_order" not in pub_lgt.evalParm("info")
 assert [n for n, _ in sw.publish_all_plan()] == [pub_layout, pub_lgt]
 sw.publish_all_usd()
 root = (shot_usd / "sq010_0010.usd").read_text(encoding="utf-8")

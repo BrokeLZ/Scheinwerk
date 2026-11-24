@@ -617,7 +617,24 @@ def hda_info(node: hou.Node) -> str:
         outside = _prims_outside_asset(node)
         if outside:
             lines.append(f"Warning  prims outside /{_node_entity(node).name}: {', '.join(outside)}")
+        unordered = _unordered_layer(node)
+        if unordered:
+            lines.append(f"Warning  {unordered}")
     return "\n".join(lines)
+
+
+def _unordered_layer(node: hou.Node) -> str:
+    """A shot or sequence layer that isn't in usd_layer_order sorts below all of them
+    (spec §9.2): the root layer and Load from Disk stack it under layout. Mostly a typo,
+    e.g. `light` for `lgt`."""
+    if not node.parm("layer") or is_cache(node):
+        return ""
+    entity = _node_entity(node)
+    order = entity.project.setting("usd_layer_order")
+    layer = node.evalParm("layer")
+    if entity.type == "asset" or not layer or layer in order:
+        return ""
+    return f"{layer} isn't in usd_layer_order ({', '.join(order)}): it sorts below all of them"
 
 
 def _prims_outside_asset(node: hou.Node) -> list[str]:
