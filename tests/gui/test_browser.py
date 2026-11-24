@@ -412,3 +412,72 @@ def test_open_existing_from_dropdown(
     monkeypatch.setattr(dialogs, "pick_folder", lambda *a: other.root / "assets")
     choose(browser, "Open existing project…")
     assert browser.project.root == other.root
+
+
+class FakeHost:
+    """A DCC adapter (spec §13.1) that records what it was asked to open."""
+
+    name = "houdini"
+    extensions = ("hip", "hipnc", "hiplc")
+
+    def __init__(self) -> None:
+        self.opened: list[Path] = []
+
+        self.scene: Path | None = None
+
+    def current_file(self) -> Path | None:
+        return self.scene
+
+    def open(self, path: Path) -> None:
+        self.opened.append(path)
+
+    def save_as(self, path: Path) -> None:
+        self.scene = path
+        path.write_bytes(b"")
+
+
+def test_inside_a_dcc_its_scenes_open_in_the_running_session(
+    qapp, show: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Launching another Houdini from Houdini's browser panel is never what's meant (§12.2).
+    launched: list[Path] = []
+    monkeypatch.setattr(actions, "open_path", lambda path, app=None: launched.append(path))
+    host = FakeHost()
+    b = Browser(show.root / "assets/char/hero/mdl/main/work", adapter=host)
+    work = show.root / "assets/char/hero/mdl/main/work"
+    hip = Workfile(work / "hero_mdl_main_v001.hip", 1, "hip")
+    nk = Workfile(work / "hero_mdl_main_v002.nk", 2, "nk")
+    actions.activate(b, 2, hip)
+    actions.activate(b, 2, nk)  # not a Houdini scene: the OS opens it as before
+    assert host.opened == [hip.path]
+    assert launched == [nk.path]
+    b.close()
+
+
+@pytest.mark.parametrize(
+    ("scene", "saved"),
+    [
+        (None, "hero_mdl_main_v003.hip"),  # untitled: the DCC's first extension
+        ("hero_mdl_main_v002.hiplc", "hero_mdl_main_v003.hiplc"),  # keeps the extension
+        ("elsewhere/rig_v007.hipnc", "hero_mdl_main_v003.hipnc"),  # from any folder
+    ],
+)
+def test_inside_a_dcc_the_scene_saves_as_the_tasks_next_version(
+    qapp, show: Project, scene: str | None, saved: str
+) -> None:
+    work = show.root / "assets/char/hero/mdl/main/work"
+    host = FakeHost()
+    host.scene = show.root / scene if scene else None
+    b = Browser(work, adapter=host)
+    menu = actions.column_menu(b, 2, None)
+    action = next(a for a in menu.actions() if a.text().startswith("Save scene as"))
+    assert action.text() == f"Save scene as {saved}"
+    action.trigger()
+    assert host.scene == work / saved and host.scene.is_file()
+    assert b.cols[2].tree.currentItem().text(0) == saved  # selected after saving
+    b.close()
+
+
+def test_outside_a_dcc_there_is_no_save_scene_entry(browser: Browser) -> None:
+    labels = menu_labels(actions.column_menu(browser, 2, None))
+    assert not any(label.startswith("Save scene") for label in labels)

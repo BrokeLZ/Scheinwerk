@@ -352,7 +352,7 @@ There are no buttons for actions: everything is in the right-click menu of the c
 | Departments | New department… (pick one of the template's or type your own; *Create task "main"* is on by default, untick it for a department without tasks); Copy path; Reveal |
 | Tasks | New task…; Copy path; Reveal |
 | A workfile | Open, Open with ▸, New version from this, Copy path / relative path, Reveal |
-| Anywhere in Files | New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path**, Ingest file(s)… |
+| Anywhere in Files | *Save scene as …* (browser panel inside a DCC only), New empty workfile ▸ (from `shared/templates/empty.<ext>`), **Copy next version path**, Ingest file(s)… |
 | Products / media | New product… / New media…, Ingest file(s)…, Copy path, Reveal |
 | Anywhere in Versions | **Copy next version path** (creates the new version folder) |
 | A version | Open folder, Finalize / Edit comment…, Set as current (USD), Copy path / relative path, Reveal |
@@ -424,8 +424,8 @@ This writes `packages/scheinwerk.json` into the preferences of every Houdini ver
 - **Variables follow the scene.** Whenever you open or save a scene inside a project, Houdini gets `$JOB` (the project root) and `$SW_ROOT`, `$SW_ENTITY`, `$SW_DEPT`, `$SW_TASK`, `$SW_CACHE`, … (see [spec §7.2](spec.md#72-environment-variables)). Use them in paths: `$SW_CACHE/sim/sim.$F4.bgeo.sc`. *File → New* clears them.
 - **Frame range and fps.** When you open a scene whose frame range or fps differs from its asset's or shot's (`entity.json`, else the project's fps), Houdini asks whether to apply them. Keys stay on their frames. Keep the fps right: the USD ROP writes the scene's fps into every layer, so *Scheinwerk Publish USD* refuses to publish from a scene at the wrong fps.
 - **Scheinwerk menu** (main menu bar) and **Scheinwerk shelf** (add it with the `+` tab on the shelf bar):
-  - *Save Next Version*: saves the scene as the task's next version (`hero_mdl_main_v004.hip`), keeping `.hip`/`.hipnc`/`.hiplc`. The scene must already be saved in a task's `work/` folder; use the browser's *Copy next version path* for the very first save.
-  - *Open Scheinwerk Browser*: the browser from the [GUI](#gui) chapter in a floating panel. You can also dock it: in any pane, *New Pane Tab Type → Scheinwerk*.
+  - *Save Next Version*: saves the scene as the task's next version (`hero_mdl_main_v004.hip`), keeping `.hip`/`.hipnc`/`.hiplc`. The scene must already be saved in a task's `work/` folder; for the very first save, use *Save scene as …* in the browser panel.
+  - *Open Scheinwerk Browser*: the browser from the [GUI](#gui) chapter in a floating panel. You can also dock it: in any pane, *New Pane Tab Type → Scheinwerk*. Opening a `.hip`, `.hipnc` or `.hiplc` there (double-click or *Open*) loads it into this Houdini, like *File → Open*: Houdini asks to save unsaved changes first. Other files open in their usual application, and *Open with* still starts the application you pick. Right-clicking in the Files column also offers **Save scene as hero_mdl_main_v003.hip** (the selected task's next version): it saves the open scene there and keeps its extension, even if the scene is untitled or belongs to another task.
   - *Copy Context Path*: copies the scene's path relative to the project, e.g. `assets/char/hero/mdl/main/work/hero_mdl_main_v004.hip`.
   - *Publish All USD*: exports every *Scheinwerk Publish USD* node in the scene, top of the chain first, after showing you the list. A node whose version already has files gets a new version first, so nothing published is overwritten. Use it when a scene publishes several layers (`geo` and `mtl`, or `layout`, `anim` and `lgt`), so none of them is left stale. Bypassed nodes and task caches are skipped.
 - **Shortcut.** To put *Save Next Version* on Ctrl+Alt+S: *Edit → Hotkeys…*, search for "Save Next Version", assign the key.
@@ -602,7 +602,7 @@ The code recognises the HDA by its `product`, `layer` or `render_name` parameter
 | --- | --- |
 | No *Scheinwerk* menu after installing | Restart Houdini. Check that `packages/scheinwerk.json` exists in the preferences of the Houdini version you start (`uv run sw install houdini` prints where it wrote it). |
 | `$JOB` is still the old folder | Save or reopen the scene: variables are set on load and save. |
-| "This scene isn't saved inside a Scheinwerk asset or shot" | Save the scene into a task's `work/` folder first (browser: *Copy next version path*). |
+| "This scene isn't saved inside a Scheinwerk asset or shot" | Save the scene into a task's `work/` folder first (browser panel: right-click in Files → *Save scene as …*). |
 | "This is a scene of sequence sq010: choose the shot" | Pick the node's *Shot*, or set the `SW_SHOT` context option. |
 | "The scene runs at 24 fps, sq010_0010 at 25" | Reopen the scene and accept the fps Scheinwerk offers, or set it in Houdini's *Global Animation Options* (playbar), keeping keys on their frames. |
 | *Published shot* says "has no published USD layers yet" | Publish at least one layer of that shot first. |

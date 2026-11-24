@@ -198,9 +198,7 @@ def save_next_version() -> Path:
     task = _task()
     suffix = current_file().suffix.lstrip(".")
     path = task.next_workfile(suffix if suffix in EXTENSIONS else "hip")
-    # "/" on every OS: Houdini pastes the path unescaped into event scripts' kwargs
-    hou.hipFile.save(path.as_posix())
-    run_hook("post_save", path=path, context=Context.from_path(path))
+    ADAPTER.save_as(path)
     return path
 
 
@@ -238,7 +236,7 @@ def browser_widget():
     """The Scheinwerk browser for the Python panel, opened at the open scene."""
     from scheinwerk.gui.browser import Browser
 
-    return Browser(current_file())
+    return Browser(current_file(), adapter=ADAPTER)
 
 
 def ui_open_browser() -> None:
@@ -1011,10 +1009,21 @@ class HoudiniAdapter:
         return current_file()
 
     def open(self, path: Path) -> None:
-        hou.hipFile.load(path.as_posix())
+        """Load into this session. With a UI Houdini asks to save unsaved changes first,
+        like File > Open; load warnings (e.g. missing assets) don't stop the load."""
+        try:
+            hou.hipFile.load(path.as_posix(), ignore_load_warnings=True)
+        except hou.Error as exc:
+            raise ScheinwerkError(f"Couldn't open {path.name}: {exc.instanceMessage()}") from exc
 
     def save_as(self, path: Path) -> None:
-        hou.hipFile.save(path.as_posix())
+        """Save, then run the post_save hook."""
+        try:
+            # "/" on every OS: Houdini pastes the path unescaped into event scripts' kwargs
+            hou.hipFile.save(path.as_posix())
+        except hou.Error as exc:
+            raise ScheinwerkError(f"Couldn't save {path.name}: {exc.instanceMessage()}") from exc
+        run_hook("post_save", path=path, context=Context.from_path(path))
 
     def main_window(self):
         return hou.qt.mainWindow()

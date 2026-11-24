@@ -765,7 +765,7 @@ PySide6. The GUI holds no logic: every action is one core call. Widgets are `QWi
 | Departments | New department… (dialog: the template departments not created yet, or a typed name; *Create task "main"*, on by default) · Copy path · Reveal |
 | Tasks | New task · Copy path · Reveal |
 | Workfiles (file) | Open · Open with ▸ · New version from this · Copy path · Copy relative path · Reveal |
-| Workfiles (empty space or file) | New empty workfile ▸ (ext) · **Copy next version path** · Ingest file(s)… |
+| Workfiles (empty space or file) | Save scene as `<next workfile>` (inside a DCC only) · New empty workfile ▸ (ext) · **Copy next version path** · Ingest file(s)… |
 | Products / Media list | New product… / New media… (name prompt) · Ingest file(s)… · Copy path · Reveal |
 | Versions (empty space or version) | **Copy next version path** |
 | Versions (version) | Open folder · Finalize / Edit comment · Set as current (USD) · Copy path · Copy relative path · Reveal |
@@ -780,10 +780,12 @@ Other interactions:
   - "New sequence": a *Name* field with `-`/`+` buttons (§5.2: step by 10; on an empty field, `next_sequence_name()`).
   - "New shot": a *Sequence* dropdown of existing sequences with `-`/`+`, a *Shot* field for the 4-digit number with `-`/`+` (on an empty field, the next free number in the chosen sequence), and optional *Frames*. The shot name is `<sequence>_<shot>`.
   - Presets come from the right-clicked item, which right-clicking also selects: a sequence folder, its `(sequence)` entry or any of its shots preset the *Sequence*; a category or an asset in it presets the *Category*.
-- "Open" uses the application configured for the extension in the user settings (§8.4, `dcc`), else the OS default. "Open with ▸" lists every configured application plus the system default.
+- "Open" uses the application configured for the extension in the user settings (§8.4, `dcc`), else the OS default. "Open with ▸" lists every configured application plus the system default. Inside a DCC (the browser panel in Houdini), "Open" and double-click load that DCC's own scene files into the running session through its adapter (`open`, §13.1), never a second instance; other files open as above, and "Open with ▸" still launches the chosen application.
+- "Save scene as `<next workfile>`" (only in a DCC's browser panel) saves the open scene through the adapter (`save_as`, §13.1) as the selected task's next workfile, named in the entry, e.g. *Save scene as hero_mdl_main_v003.hip*. It keeps the scene's extension; an untitled scene, or one with another extension, gets the DCC's first extension (`hip`). Like *Save Next Version* (§13.2.3) it runs the `post_save` hook, but into the selected task, so it can also save an untitled scene or move a scene into another task.
 - Extension list for New empty workfile: `hip`, `nk`, `blend`, the `dcc` extensions from the user settings, the `shared/templates/empty.<ext>` templates and the extensions already in the task. New empty workfile is enabled only where a template exists.
 - "Copy next version path" copies a path without extension (§5.3). In Files it creates nothing. In Versions it creates the next `v###` folder (reserving the number), copies `…/v###/{entity}_{name}_v###` and selects the new, still empty version.
 - "Finalize / Edit comment" asks for the comment (pre-filled) and, for a USD version with several `.usd` files, which one is the main file.
+- Column widths are proportions (entities 18 %, departments + tasks 30 %, files 52 %), so a narrow panel (docked in a DCC) shrinks every column alike. The splitters can still be dragged.
 - After creating something the browser selects it. Errors from core appear in a message box.
 - Open and reveal go through one helper per OS (`core/system.py`): macOS `open` / `open -a <app>` / `open -R`, Windows `os.startfile` / the app's exe / `explorer /select,`, Linux `xdg-open`.
 
@@ -807,7 +809,7 @@ class DCCAdapter(Protocol):
     def main_window(self) -> "QWidget | None": ...
 ```
 
-Integrations are installed persistently (no launcher needed). On every file open and save-as, they derive the context from the file path and set the §7.2 env vars.
+Integrations are installed persistently (no launcher needed). On every file open and save-as, they derive the context from the file path and set the §7.2 env vars. `save_as` runs the `post_save` hook after saving; `open` and `save_as` raise `ScheinwerkError` when the DCC can't load or save.
 
 ### 13.2 Houdini 21 (key integration)
 

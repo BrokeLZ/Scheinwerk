@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -30,6 +31,9 @@ from scheinwerk.core.project import Project
 from scheinwerk.core.settings import add_recent_project, load_settings
 from scheinwerk.core.versions import Product, Version, file_sequences
 from scheinwerk.gui import actions, dialogs
+
+if TYPE_CHECKING:
+    from scheinwerk.dcc.base import DCCAdapter  # type only: gui never imports dcc
 from scheinwerk.gui.columns import Column, Detail, Row
 
 VIEWS = ("scenefiles", "products", "media")
@@ -53,8 +57,14 @@ def _frames(frames: tuple[int, int] | None) -> str:
 class Browser(QWidget):
     picked = Signal()  # double-click while picking (see gui/pick.py)
 
-    def __init__(self, path: Path | None = None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        parent: QWidget | None = None,
+        adapter: DCCAdapter | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.adapter = adapter  # the DCC the browser runs in, if any
         self.setObjectName("browser")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)  # paint the QSS background
         self.setStyleSheet(load_theme())  # on the widget, not the app: never restyle a host DCC
@@ -141,8 +151,11 @@ class Browser(QWidget):
         main.addWidget(entity_panel)
         main.addWidget(middle)
         main.addWidget(self.cols[2])
-        main.setSizes([240, 440, 520])
-        main.setStretchFactor(2, 1)
+        # Proportions, not pixels: a narrow panel (e.g. docked in Houdini) shrinks every
+        # column alike instead of taking it all from Files, which needs the width most.
+        for i, share in enumerate((18, 30, 52)):
+            main.setStretchFactor(i, share)
+        main.setSizes([180, 300, 520])
 
         layout = QVBoxLayout(self)
         layout.addWidget(top)

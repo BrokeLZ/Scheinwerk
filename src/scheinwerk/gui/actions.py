@@ -208,7 +208,25 @@ def _extensions(b: Browser, task: Task) -> list[str]:
 
 
 def _open(b: Browser, path: Path, ext: str | None = None) -> None:
-    b.run(open_path, path, app_for(b.settings, ext) if ext else None)
+    """Inside a DCC, its own scenes load into the running session (spec §12.2)."""
+    if b.adapter and path.suffix[1:].lower() in b.adapter.extensions:
+        b.run(b.adapter.open, path)
+    else:
+        b.run(open_path, path, app_for(b.settings, ext) if ext else None)
+
+
+def _save_scene_menu(b: Browser, menu: QMenu, task: Task) -> None:
+    """Inside a DCC: save the open scene as the selected task's next workfile, keeping
+    its extension (spec §12.2)."""
+    current = b.adapter.current_file()
+    ext = current.suffix[1:].lower() if current else ""
+    target = task.next_workfile(ext if ext in b.adapter.extensions else b.adapter.extensions[0])
+
+    def save() -> None:
+        b.remember(2, target.name)
+        b.run(b.adapter.save_as, target)
+
+    _add(menu, f"Save scene as {target.name}", save)
 
 
 def _file_menu(b: Browser, menu: QMenu, data: object) -> None:
@@ -235,12 +253,14 @@ def _file_menu(b: Browser, menu: QMenu, data: object) -> None:
         _path_actions(b, menu, data.path)
         menu.addSeparator()
     elif isinstance(data, Path):  # unmanaged
-        _add(menu, "Open", lambda: b.run(open_path, data))
+        _add(menu, "Open", lambda: _open(b, data))
         _path_actions(b, menu, data)
         menu.addSeparator()
     if task is None:
         _add(menu, "Select a task first", None)
         return
+    if b.adapter:
+        _save_scene_menu(b, menu, task)
     exts = _extensions(b, task)
     templates = b.project.root / "shared" / "templates"
 
@@ -349,7 +369,7 @@ def activate(b: Browser, i: int, data: object) -> None:
     if isinstance(data, Workfile):
         _open(b, data.path, data.ext)
     elif isinstance(data, Path):
-        b.run(open_path, data)
+        _open(b, data)
     elif isinstance(data, Version):
         b.run(reveal, data.path)
     elif isinstance(data, FileGroup):

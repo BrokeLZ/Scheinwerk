@@ -267,4 +267,15 @@ hou.hipFile.clear(suppress_save_prompt=True)
 assert os.environ["SW_ROOT"] == "" and sw.current_file() is None
 assert sw.ADAPTER.current_file() is None and sw.ADAPTER.extensions == ("hip", "hipnc", "hiplc")
 
+# --- the browser opens scenes in this session (spec §12.2) --------------------------
+sw.ADAPTER.open(work / "hero_mdl_main_v001.hip")
+assert sw.current_file() == work / "hero_mdl_main_v001.hip"
+assert os.environ["SW_ENTITY"] == "hero"  # the load callback ran
+assert sw.browser_widget  # the panel passes ADAPTER (gui needs Qt, checked in tests/gui)
+try:
+    sw.ADAPTER.open(work / "missing.hip")
+    raise AssertionError("opened a missing file")
+except sw.ScheinwerkError as exc:
+    assert "missing.hip" in str(exc), exc
+
 print("ALL OK", hou.applicationVersionString())
