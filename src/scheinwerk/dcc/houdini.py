@@ -192,6 +192,23 @@ def startup() -> None:
 # --- menu and shelf actions --------------------------------------------------------
 
 
+# Houdini's default paths of Camera and Light LOPs -> theirs in the shot structure (§9.2).
+WORLD_PATHS = {"/cameras/$OS": "/world/cameras/$OS", "/lights/$OS": "/world/lights/$OS"}
+
+
+def on_created(node: hou.Node) -> None:
+    """scripts/OnCreated.py: move a new Camera or Light LOP under /world. Only the exact
+    defaults change, so a path the user set (or a pasted node's) stays. Never raises."""
+    try:
+        parm = node.parm("primpath") if isinstance(node, hou.LopNode) else None
+        if parm is not None and not parm.keyframes():
+            new = WORLD_PATHS.get(parm.unexpandedString())
+            if new:
+                parm.set(new)
+    except hou.Error:
+        log.exception("Scheinwerk: OnCreated failed for %s", node.path())
+
+
 def save_next_version() -> Path:
     """Save the scene as the task's next workfile version (spec §13.2.3), then run the
     post_save hook. Keeps the scene's extension (.hip, .hipnc, .hiplc)."""

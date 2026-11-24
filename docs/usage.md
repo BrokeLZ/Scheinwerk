@@ -456,14 +456,14 @@ A typical project:
 
 1. **Asset**, one scene: *Asset Start* → geometry → *Publish USD* `geo` → materials → *Publish USD* `mtl` → *Publish All USD*. Each publish ends with a Layer Break, so `mtl` holds only the materials and their bindings. Variants are yours to author (e.g. *Add Variant*): a `model` variant set for `geo` and a `look` set for `mtl`, on `/hero`. Bind materials on `/hero/geo/render` or higher, so model variants keep them.
 2. **Shot, fx scene**: *Shot Start* (load `layout`, `anim`) → the effect under `/world/fx` → *Publish USD* `fx`.
-3. **Shot, main scene**: *Shot Start* (load `fx`) → *Import USD* the assets (they land in their group: `/world/chars/hero`, `/world/props/chair`, `/world/env/forest`) → *Publish USD* `layout` → animation → *Publish USD* `anim` → cameras under `/world/cameras`, lights under `/world/lights`, render settings → *Publish USD* `lgt` → *Publish All USD*. Houdini's Camera and Light LOPs default to `/cameras/$OS` and `/lights/$OS`: change that to `/world/cameras/$OS` and `/world/lights/$OS`, so they follow a transform on `/world`.
+3. **Shot, main scene**: *Shot Start* (load `fx`) → *Import USD* the assets (they land in their group: `/world/chars/hero`, `/world/props/chair`, `/world/env/forest`) → *Publish USD* `layout` → animation → *Publish USD* `anim` → cameras under `/world/cameras`, lights under `/world/lights`, render settings → *Publish USD* `lgt` → *Publish All USD*. New Camera and Light LOPs already start at `/world/cameras/$OS` and `/world/lights/$OS` (Scheinwerk changes Houdini's defaults), so they follow a transform on `/world`.
 4. **Final render**: *Scheinwerk Render* with *Source: Published shot*.
 
 In the working scene, loaded layers sit *below* everything authored in the chain. The published shot orders them by `usd_layer_order` instead. So where two departments change the same prim (fx hiding an animated prop), a live preview can differ from the published shot. The final render from the published shot is always right.
 
 ### Publishing with the HDAs
 
-Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render*:
+Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render* (all Scheinwerk HDAs are in the Tab menu's **Scheinwerk** submenu):
 
 | HDA | Network | Writes to |
 | --- | --- | --- |
@@ -557,7 +557,7 @@ hython integrations/houdini/build_hdas.py sw_publish_sop    # just one
 - *Scheinwerk Import*: a File SOP `load` reading `chs("../path")` → Null `OUT`.
 - *Scheinwerk Import USD*: the input → a Sublayer LOP and a Reference LOP (both `filepath1` = `chs("../path")`, the reference's `primpath1` = `chs("../primpath")`) → a Switch `mode` (`SW.import_mode(hou.pwd().parent())`: 0 sublayer, 1 reference) → `output0`.
 
-To build one by hand instead (or to read what the script does): create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
+To build one by hand instead (or to read what the script does): create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. To list it under *Scheinwerk* in the Tab menu, set *Type Properties → Interactive → Shelf Tools → Context → TAB Submenu Path* to `Scheinwerk`. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
 
 Houdini keeps copies of earlier saves in `otls/backup/`. Git ignores that folder.
 

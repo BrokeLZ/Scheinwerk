@@ -113,6 +113,26 @@ def library(name: str) -> Path:
     return OTLS / f"{name}.{ext}"
 
 
+def tool_xml(category: str) -> str:
+    """The TAB menu entry: under Scheinwerk, not Houdini's default Digital Assets."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <tool name="$HDA_DEFAULT_TOOL" label="$HDA_LABEL" icon="$HDA_ICON">
+    <toolMenuContext name="viewer">
+      <contextNetType>{category.upper()}</contextNetType>
+    </toolMenuContext>
+    <toolMenuContext name="network">
+      <contextOpType>$HDA_TABLE_AND_NAME</contextOpType>
+    </toolMenuContext>
+    <toolSubmenu>Scheinwerk</toolSubmenu>
+    <script scriptType="python"><![CDATA[import {category.lower()}toolutils
+
+{category.lower()}toolutils.genericTool(kwargs, '$HDA_NAME')]]></script>
+  </tool>
+</shelfDocument>
+"""
+
+
 def save_asset(subnet, name: str, label: str, icon: str, parms: list, inputs: tuple[int, int]):
     path = library(name)
     for old in OTLS.glob(f"{name}.hda*"):  # rebuild from scratch
@@ -127,6 +147,7 @@ def save_asset(subnet, name: str, label: str, icon: str, parms: list, inputs: tu
         ignore_external_references=True,
     )
     definition = node.type().definition()
+    definition.addSection("Tools.shelf", tool_xml(node.type().category().name()))
     group = hou.ParmTemplateGroup(parms)
     definition.setParmTemplateGroup(group)
     definition.setIcon(icon)

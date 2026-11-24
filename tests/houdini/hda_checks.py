@@ -382,7 +382,10 @@ pub_layout = create(stage, "sw_publish_lop", hero_in)
 pub_layout.parm("layer").set("layout")
 cam = stage.createNode("camera")
 cam.setInput(0, pub_layout)
-cam.parm("primpath").set("/world/cameras/$OS")
+assert cam.parm("primpath").unexpandedString() == "/world/cameras/$OS"  # scripts/OnCreated.py
+light = stage.createNode("light::2.0")
+assert light.parm("primpath").unexpandedString() == "/world/lights/$OS"
+light.destroy()
 cam.parmTuple("t").set((0, 0, 5))
 settings = stage.createNode("karmarenderproperties")
 settings.setInput(0, cam)
@@ -423,5 +426,18 @@ for rel in (
 ):
     assert rel in used, used
 assert not any(u.endswith(("fx.usd", "sq010_0010.usd", "hero.usd", "payload.usd")) for u in used)
+
+# --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
+tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}
+for name in (
+    "sop_sw_publish_sop",
+    "lop_sw_publish_lop",
+    "lop_sw_asset_start",
+    "lop_sw_shot_start",
+    "lop_sw_render",
+    "sop_sw_import_sop",
+    "lop_sw_import_lop",
+):
+    assert tools.get(name) == ("Scheinwerk",), (name, tools.get(name))  # fmt: skip
 
 print("ALL OK", hou.applicationVersionString())
