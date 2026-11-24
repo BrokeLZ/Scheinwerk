@@ -1,4 +1,4 @@
-"""Runs inside hython (see test_houdini.py): export with the three HDAs from
+"""Runs inside hython (see test_houdini.py): export with the HDAs from
 integrations/houdini/otls, loaded through the package. Prints ALL OK at the end."""
 
 import json
@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import hou
-from pxr import Usd
+from pxr import Sdf, Usd, UsdGeom
 
 import scheinwerk.dcc.houdini as sw
 from scheinwerk.core.project import Project
@@ -104,7 +104,8 @@ assert lop.evalParm("version") == 1 and not usd.exists()
 lop.parm("execute").pressButton()
 assert names(usd / "asset/v001") == ["hero_asset_v001.usd", "version.json"]
 assert "@./v001/hero_asset_v001.usd@" in (usd / "asset/asset.usd").read_text(encoding="utf-8")
-assert "@./asset/asset.usd@" in (usd / "hero.usd").read_text(encoding="utf-8")
+assert "@./asset/asset.usd@" in (usd / "payload.usd").read_text(encoding="utf-8")
+assert 'kind = "component"' in (usd / "hero.usd").read_text(encoding="utf-8")
 assert lop.stage().GetPrimAtPath("/sphere1"), "the stage must pass through"
 assert "Current  v001" in lop.evalParm("info"), lop.evalParm("info")
 assert lop.parm("layer").menuItems() == ("asset",)
@@ -164,7 +165,8 @@ lop_cache.parm("target").set("cache")
 lop_cache.parm("layer").set("look")
 lop_cache.parm("execute").pressButton()
 assert names(cache_dir / "look/v001") == ["hero_look_v001.usd"]
-assert not (usd / "look").exists() and "look" not in (usd / "hero.usd").read_text(encoding="utf-8")
+assert not (usd / "look").exists()
+assert "look" not in (usd / "payload.usd").read_text(encoding="utf-8")
 lop_cache.parm("load").set(1)
 assert lop_cache.node("load_from_disk").evalParm("input") == 1
 assert lop_cache.stage().GetPrimAtPath("/sphere1"), "the cached layer is loaded back"
@@ -292,5 +294,130 @@ for node, name_parm in ((publisher, "product"), (create(stage, "sw_publish_lop",
 publish = project.root / "shots/sq010/sq010_0020/publish"
 assert names(publish / "fresh/v001") == ["sq010_0020_fresh_v001.1001.bgeo.sc", "version.json"]
 assert names(publish / "_usd/fresh/v001") == ["sq010_0020_fresh_v001.usd", "version.json"]
+
+# --- an asset from Asset Start: geo, then mtl, from one scene, with Publish All USD
+hou.hipFile.clear(suppress_save_prompt=True)
+hou.hipFile.save((hero.path / "lookdev/main/work/hero_lookdev_main_v002.hip").as_posix())
+stage = hou.node("/stage")
+start = stage.createNode("sw_asset_start", exact_type_name=True)
+assert start.evalParm("asset") == "hero"
+s = start.stage()
+assert s.GetPrimAtPath("/hero").GetTypeName() == "Xform" and not s.GetPrimAtPath("/hero").GetKind()
+assert s.GetPrimAtPath("/hero/mtl").GetTypeName() == "Scope"
+for purpose in ("render", "proxy"):
+    prim = s.GetPrimAtPath(f"/hero/geo/{purpose}")
+    assert UsdGeom.Imageable(prim).GetPurposeAttr().Get() == purpose, purpose
+body = stage.createNode("sphere")
+body.setInput(0, start)
+body.parm("primpath").set("/hero/geo/render/body")
+pub_geo = create(stage, "sw_publish_lop", body)
+pub_geo.parm("layer").set("geo")  # geo/v001 exists from above: Publish All makes v002
+assert pub_geo.evalParm("layer_break") == 1 and "Warning" not in pub_geo.evalParm("info")
+look = stage.createNode("primitive")
+look.setInput(0, pub_geo)
+look.parm("primpath").set("/hero/mtl/red")
+look.parm("primtype").set("UsdGeomScope")
+pub_mtl = create(stage, "sw_publish_lop", look)
+pub_mtl.parm("layer").set("mtl")
+stray = stage.createNode("cube")
+stray.setInput(0, pub_geo)
+stray.parm("primpath").set("/stray")
+warned = create(stage, "sw_publish_lop", stray)
+warned.parm("layer").set("mtl")
+assert "prims outside /hero: /stray" in warned.evalParm("info"), warned.evalParm("info")
+warned.bypass(True)  # Publish All skips bypassed nodes
+assert sw.publish_all_plan() == [(pub_geo, 2), (pub_mtl, 1)]
+sw.publish_all_usd()
+assert names(usd / "geo/v002") == ["hero_geo_v002.usd", "version.json"]
+assert names(usd / "mtl/v001") == ["hero_mtl_v001.usd", "version.json"]
+payload = (usd / "payload.usd").read_text(encoding="utf-8")
+assert payload.index("./mtl/") < payload.index("./geo/") < payload.index("./asset/"), payload
+mtl_layer = Sdf.Layer.FindOrOpen(str(usd / "mtl/v001/hero_mtl_v001.usd"))
+assert mtl_layer.GetPrimAtPath("/hero/mtl/red")
+assert not mtl_layer.GetPrimAtPath("/hero/geo/render/body")
+asset = Usd.Stage.Open(str(usd / "hero.usd"))
+assert asset.GetPrimAtPath("/hero").GetKind() == "component"
+assert asset.GetPrimAtPath("/hero/geo/render/body") and asset.GetPrimAtPath("/hero/mtl/red")
+unloaded = Usd.Stage.Open(str(usd / "hero.usd"), Usd.Stage.LoadNone)
+assert not unloaded.GetPrimAtPath("/hero/geo"), "the asset's layers sit behind its payload"
+
+# --- a shot: fx in one scene, layout and lighting in another, both from Shot Start
+shot.create_department("fx")
+shot.create_department("lgt")
+shot_usd = shot.path / "publish/_usd"
+hou.hipFile.clear(suppress_save_prompt=True)
+hou.hipFile.save((shot.path / "fx/main/work/sq010_0010_fx_main_v001.hip").as_posix())
+stage = hou.node("/stage")
+fx_start = stage.createNode("sw_shot_start", exact_type_name=True)
+assert fx_start.evalParm("load") == "sequence"
+loaded = fx_start.evalParm("info").splitlines()
+assert loaded == ["Loaded (strongest first):", "shared/usd/structure.usd"], loaded
+assert fx_start.stage().GetPrimAtPath("/world/assets") and fx_start.stage().GetPrimAtPath("/Render")
+ball = stage.createNode("sphere")
+ball.setInput(0, fx_start)
+ball.parm("primpath").set("/world/fx/ball")
+pub_fx = create(stage, "sw_publish_lop", ball)
+pub_fx.parm("layer").set("fx")
+pub_fx.parm("execute").pressButton()
+fx_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "fx/v001/sq010_0010_fx_v001.usd"))
+assert fx_layer.GetPrimAtPath("/world/fx/ball")
+assert fx_layer.GetPrimAtPath("/world").specifier == Sdf.SpecifierOver  # structure not republished
+assert not fx_layer.GetPrimAtPath("/cameras")
+
+hou.hipFile.clear(suppress_save_prompt=True)
+hou.hipFile.save((shot.path / "lgt/main/work/sq010_0010_lgt_main_v001.hip").as_posix())
+hou.setFrame(1001)
+stage = hou.node("/stage")
+main_start = stage.createNode("sw_shot_start", exact_type_name=True)
+main_start.parm("load").set("fx sequence")
+assert "shots/sq010/sq010_0010/publish/_usd/fx/fx.usd" in main_start.evalParm("info")
+assert main_start.stage().GetPrimAtPath("/world/fx/ball")
+hero_in = create(stage, "sw_import_lop", main_start)
+hero_in.parm("entity").set("hero")
+assert hero_in.evalParm("primpath") == "/world/assets/hero"  # matches the structure layer
+assert hero_in.stage().GetPrimAtPath("/world/assets/hero/geo/render/body")
+pub_layout = create(stage, "sw_publish_lop", hero_in)
+pub_layout.parm("layer").set("layout")
+cam = stage.createNode("camera")
+cam.setInput(0, pub_layout)
+cam.parmTuple("t").set((0, 0, 5))
+settings = stage.createNode("karmarenderproperties")
+settings.setInput(0, cam)
+pub_lgt = create(stage, "sw_publish_lop", settings)
+pub_lgt.parm("layer").set("lgt")
+assert [n for n, _ in sw.publish_all_plan()] == [pub_layout, pub_lgt]
+sw.publish_all_usd()
+root = (shot_usd / "sq010_0010.usd").read_text(encoding="utf-8")
+assert (
+    root.index("./lgt/")
+    < root.index("./fx/")
+    < root.index("./layout/")
+    < root.index("shared/usd/structure.usd")
+), root
+assert "    startTimeCode = 1001\n    endTimeCode = 1002\n" in root
+layout_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "layout/v001/sq010_0010_layout_v001.usd"))
+refs = layout_layer.GetPrimAtPath("/world/assets/hero").referenceList.GetAddedOrExplicitItems()
+assert refs and refs[0].assetPath.startswith("../"), refs  # file-relative, to hero.usd
+lgt_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "lgt/v001/sq010_0010_lgt_v001.usd"))
+assert not lgt_layer.GetPrimAtPath("/world/assets/hero"), "layout isn't published again"
+
+# --- the final render, from the published shot; it records what it used
+final = create(stage, "sw_render", pub_lgt)
+final.parm("render_name").set("final")
+final.parm("source").set("published")
+final.parm("range").set("current")
+final.parm("execute").pressButton()
+final_dir = shot.path / "media/render_final/v001"
+assert names(final_dir) == ["sq010_0010_render_final_v001.1001.exr", "version.json"]
+used = json.loads((final_dir / "version.json").read_text(encoding="utf-8"))["usd_files"]
+for rel in (
+    "assets/char/hero/publish/_usd/geo/v002/hero_geo_v002.usd",
+    "assets/char/hero/publish/_usd/mtl/v001/hero_mtl_v001.usd",
+    "shots/sq010/sq010_0010/publish/_usd/fx/v001/sq010_0010_fx_v001.usd",
+    "shots/sq010/sq010_0010/publish/_usd/layout/v001/sq010_0010_layout_v001.usd",
+    "shots/sq010/sq010_0010/publish/_usd/lgt/v001/sq010_0010_lgt_v001.usd",
+):
+    assert rel in used, used
+assert not any(u.endswith(("fx.usd", "sq010_0010.usd", "hero.usd", "payload.usd")) for u in used)
 
 print("ALL OK", hou.applicationVersionString())

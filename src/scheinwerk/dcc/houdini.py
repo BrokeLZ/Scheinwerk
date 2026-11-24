@@ -27,12 +27,14 @@ from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import finalize
 from scheinwerk.core.templates import format_version, parse_version, validate_name
+from scheinwerk.core.usd_pointer import write_structure
 from scheinwerk.core.versions import Product, Version, file_sequences
 
 log = logging.getLogger("scheinwerk.houdini")
 
 EXTENSIONS = ("hip", "hipnc", "hiplc")
 SHOT_OPTION = "SW_SHOT"  # context option naming the target shot in a sequence scene
+SEQ_TARGET = "_seq"  # as a shot: the sequence itself (spec §13.2.7)
 
 
 # --- the open scene --------------------------------------------------------------
@@ -75,12 +77,15 @@ def _shot_option() -> str:
 
 def target_entity(shot: str | None = None) -> Entity:
     """Where publishes and renders go: the scene's entity. In a sequence scene, the shot
-    given here, else the one in the SW_SHOT context option (spec §13.2.7)."""
+    given here, else the one in the SW_SHOT context option; `_seq` is the sequence itself
+    (spec §13.2.7)."""
     project, ctx = _project_and_context()
     entity = project.entity_at(ctx)
     if entity.type != "sequence":
         return entity
     shot = shot or _shot_option()
+    if shot == SEQ_TARGET:
+        return entity
     if not shot:
         raise ScheinwerkError(
             f"This is a scene of sequence {entity.name}: choose the shot to publish to "
@@ -113,22 +118,48 @@ def set_frame_range(frames: tuple[int, int]) -> None:
     hou.playbar.setPlaybackRange(frames[0], frames[1])
 
 
+def set_fps(fps: float) -> None:
+    """Change the scene's fps, keeping keys and the frame range on their frames."""
+    hou.setFps(fps, modify_frame_count=False, preserve_keyframes=True, preserve_frame_start=True)
+
+
+def fps_matches(fps: float) -> bool:
+    return abs(hou.fps() - fps) < 1e-3
+
+
+def _fps_text(fps: float) -> str:
+    return f"{fps:g}"
+
+
 def check_frame_range(ctx: Context) -> None:
-    """If the entity's frame range differs from the scene's, ask before applying it."""
-    frames = Project.find(ctx.root).entity_at(ctx).frames
+    """If the entity's frame range or fps differs from the scene's, ask before applying
+    them. The fps matters: the USD ROP writes the scene's fps into every layer (spec
+    §13.2.2)."""
+    entity = Project.find(ctx.root).entity_at(ctx)
+    frames, fps = entity.frames, entity.fps
     scene = tuple(int(f) for f in hou.playbar.frameRange())
-    if frames is None or scene == frames or not hou.isUIAvailable():
+    wrong_frames = frames is not None and scene != frames
+    if not (wrong_frames or not fps_matches(fps)) or not hou.isUIAvailable():
         return
+    have, want = [], []
+    if not fps_matches(fps):
+        have.append(f"{_fps_text(hou.fps())} fps")
+        want.append(f"{_fps_text(fps)} fps")
+    if wrong_frames:
+        have.append(f"{scene[0]}-{scene[1]}")
+        want.append(f"{frames[0]}-{frames[1]}")
     choice = hou.ui.displayMessage(
-        f"The scene's frame range is {scene[0]}-{scene[1]}, "
-        f"but {ctx.entity} is {frames[0]}-{frames[1]}.",
-        buttons=(f"Use {frames[0]}-{frames[1]}", "Keep"),
+        f"The scene is {', '.join(have)}, but {ctx.entity} is {', '.join(want)}.",
+        buttons=(f"Use {', '.join(want)}", "Keep"),
         default_choice=0,
         close_choice=1,
         title="Scheinwerk",
     )
     if choice == 0:
-        set_frame_range(frames)
+        if not fps_matches(fps):
+            set_fps(fps)
+        if wrong_frames:
+            set_frame_range(frames)
 
 
 def _on_hip_event(event_type: hou.hipFileEventType) -> None:
@@ -268,8 +299,12 @@ def shots() -> list[tuple[str, tuple[int, int] | None]]:
 
 
 def shot_menu() -> list[str]:
-    """For a Shot menu parm: "" means the SW_SHOT context option, then every shot."""
+    """For a Shot menu parm: "" means the SW_SHOT context option, then in a sequence scene
+    `_seq` (the sequence itself) and every shot."""
     items = ["", f"(context option {SHOT_OPTION})"]
+    ctx = context()
+    if ctx is not None and ctx.entity_type == "sequence":
+        items += [SEQ_TARGET, "(the sequence itself)"]
     try:
         found = shots()
     except ScheinwerkError:
@@ -284,20 +319,6 @@ def set_shot(shot: str) -> None:
     hou.setContextOption(SHOT_OPTION, shot)
 
 
-def layers_below(layer: str, shot: str | None = None) -> list[str]:
-    """Pointer layers weaker than `layer` in usd_layer_order that exist, strongest first,
-    as `$JOB/…` paths for a Sublayer LOP (spec §13.2.8: load what's below, publish yours)."""
-    entity = target_entity(shot)
-    order = entity.project.setting("usd_layer_order")
-    below = order[order.index(layer) + 1 :] if layer in order else []
-    usd = entity.path / "publish" / "_usd"
-    return [
-        "$JOB/" + entity.project.rel(usd / name / f"{name}.usd")
-        for name in below
-        if (usd / name / f"{name}.usd").is_file()
-    ]
-
-
 # --- the writing HDAs: sw_publish_sop, sw_publish_lop, sw_render ------------------------
 # Their parameters are described in docs/usage.md ("Building the HDAs"). The kind is told
 # apart by its name parm: product (SOP), layer (LOP) or render_name (render). The two
@@ -305,6 +326,7 @@ def layers_below(layer: str, shot: str | None = None) -> list[str]:
 # task cache, <task>/cache/<name>/v###/, never finalized: caches are free-form, spec §4).
 
 TARGET_PUBLISH, TARGET_CACHE = 0, 1  # the publish HDAs' `target` menu
+ASSET_LAYERS = ("geo", "mtl")  # layers with prim conventions (spec §9.3)
 
 
 def is_cache(node: hou.Node) -> bool:
@@ -416,20 +438,44 @@ def hda_new_version(node: hou.Node) -> None:
     node.parm("version").set((product.highest() or 0) + 1)
 
 
-def hda_execute(node: hou.Node) -> None:
-    """Export/Render button: check the node, create its version folder (the USD ROP doesn't
-    make missing folders), then press the inner ROP's Render button."""
-    try:
-        product, ext, _ = _hda(node)
-        rop = next((c for c in node.children() if c.parm("execute")), None)
-        if rop is None:
-            raise ScheinwerkError(f"{node.path()} has no ROP inside it.")
-    except ScheinwerkError as exc:
-        _show(exc)
-        return
+def _fps_problem(node: hou.Node) -> str:
+    """Why a USD publish would carry the wrong fps, or "" (the USD ROP writes the scene's
+    fps into the layer, spec §9.2 item 5)."""
+    if not node.parm("layer") or is_cache(node):
+        return ""
+    entity = _node_entity(node)
+    if fps_matches(entity.fps):
+        return ""
+    return (
+        f"The scene runs at {_fps_text(hou.fps())} fps, {entity.name} at "
+        f"{_fps_text(entity.fps)}: set the scene to {_fps_text(entity.fps)} fps before "
+        "publishing (Scheinwerk offers it when the scene is opened)."
+    )
+
+
+def _export(node: hou.Node) -> None:
+    """Check the node, create its version folder (the USD ROP doesn't make missing
+    folders), then press the inner ROP's Render button. Raises ScheinwerkError."""
+    product, ext, _ = _hda(node)
+    problem = _fps_problem(node)
+    if problem:
+        raise ScheinwerkError(problem)
+    # by name first: that loads a locked HDA's contents, children() alone may not
+    rop = node.node("export") or node.node("render")
+    rop = rop or next((c for c in node.children() if c.parm("execute")), None)
+    if rop is None:
+        raise ScheinwerkError(f"{node.path()} has no ROP inside it.")
     product.file_path(hda_version(node), ext).parent.mkdir(parents=True, exist_ok=True)
     rop.parm("execute").pressButton()
     _refresh_info(node)
+
+
+def hda_execute(node: hou.Node) -> None:
+    """Export/Render button."""
+    try:
+        _export(node)
+    except ScheinwerkError as exc:
+        _show(exc)
 
 
 def publish_choose(node: hou.Node) -> None:
@@ -515,7 +561,30 @@ def hda_info(node: hou.Node) -> str:
     else:
         state = f"exists ({_files(version)}): {action} overwrites it"
     lines.append(f"Version  {format_version(number)} {state}")
+    with contextlib.suppress(ScheinwerkError):
+        problem = _fps_problem(node)
+        if problem:
+            lines.append(f"Warning  {problem}")
+        outside = _prims_outside_asset(node)
+        if outside:
+            lines.append(f"Warning  prims outside /{_node_entity(node).name}: {', '.join(outside)}")
     return "\n".join(lines)
+
+
+def _prims_outside_asset(node: hou.Node) -> list[str]:
+    """Root prims of the incoming stage other than the asset's, for the asset layers geo
+    and mtl (spec §9.3: everything an asset layer authors lives under /<asset>)."""
+    if not node.parm("layer") or is_cache(node) or node.evalParm("layer") not in ASSET_LAYERS:
+        return []
+    entity = _node_entity(node)
+    inputs = [i for i in node.inputs() if i is not None]
+    if entity.type != "asset" or not inputs:
+        return []
+    stage = inputs[0].stage()
+    if stage is None:
+        return []
+    names = [p.GetName() for p in stage.GetPseudoRoot().GetAllChildren()]
+    return [f"/{n}" for n in names if n not in (entity.name, "HoudiniLayerInfo")]
 
 
 def _refresh_info(node: hou.Node) -> None:
@@ -539,7 +608,163 @@ def hda_post_render(node: hou.Node) -> None:
         comment=node.evalParm("comment") if node.parm("comment") else "",
         main_file=main,
         dcc="houdini",
+        usd_files=used_usd_files(node) if node.parm("render_name") else None,
     )
+
+
+def used_usd_files(node: hou.Node) -> list[Path]:
+    """The published USD files the render's stage uses (payloads loaded, as Houdini loads
+    them): every used layer inside a v### folder under publish/ (spec §8.3)."""
+    source = node.node("source")
+    stage = source.stage() if source is not None else None
+    if stage is None:
+        return []
+    found = []
+    for layer in stage.GetUsedLayers():
+        if not layer.realPath:
+            continue  # anonymous layers: the scene's own edits
+        ctx = context(Path(layer.realPath))
+        if ctx is not None and ctx.area == "publish" and ctx.version is not None:
+            found.append(Path(layer.realPath))
+    return found
+
+
+# --- Publish All USD (spec §13.2.3) -------------------------------------------------
+
+
+def _usd_publish_nodes() -> list[hou.Node]:
+    """Every sw_publish_lop writing to Publish and not bypassed, upstream first."""
+    kind = hou.nodeType(hou.lopNodeTypeCategory(), "sw_publish_lop")
+    if kind is None:
+        return []
+    nodes = [n for n in kind.instances() if not n.isBypassed() and not is_cache(n)]
+    paths = {n.path() for n in nodes}
+
+    def upstream(node: hou.Node) -> int:  # an ancestor always has fewer of them
+        return sum(1 for a in node.inputAncestors() if a.path() in paths)
+
+    return sorted(nodes, key=lambda n: (upstream(n), n.path()))
+
+
+def publish_all_plan() -> list[tuple[hou.Node, int]]:
+    """(node, version) for Publish All USD. A version that already has files becomes a new
+    one, so nothing published is overwritten. Raises for a node without a valid name."""
+    plan: list[tuple[hou.Node, int]] = []
+    taken: dict[Path, int] = {}  # two nodes publishing the same layer
+    for node in _usd_publish_nodes():
+        product, ext, _ = _hda(node)
+        number = hda_version(node)
+        version = Version(product.project, product.file_path(number, ext).parent)
+        if version.path.is_dir() and not version.empty:
+            number = (product.highest() or 0) + 1
+        if product.path in taken:
+            number = max(number, taken[product.path] + 1)
+        taken[product.path] = number
+        plan.append((node, number))
+    return plan
+
+
+def publish_all_usd(plan: list[tuple[hou.Node, int]] | None = None) -> list[hou.Node]:
+    """Export every USD publish node of the scene in chain order; stops at the first error."""
+    plan = publish_all_plan() if plan is None else plan
+    for node, number in plan:
+        node.parm("version").set(number)
+    for node, _ in plan:
+        _export(node)
+    return [node for node, _ in plan]
+
+
+def ui_publish_all_usd() -> None:
+    try:
+        plan = publish_all_plan()
+    except ScheinwerkError as exc:
+        _show(exc)
+        return
+    if not plan:
+        hou.ui.displayMessage("This scene has no Publish USD nodes.", title="Scheinwerk")
+        return
+    lines = [f"{n.path()}   {n.evalParm('layer')} {format_version(v)}" for n, v in plan]
+    choice = hou.ui.displayMessage(
+        "Publish these USD layers, in this order?",
+        buttons=("Publish", "Cancel"),
+        default_choice=0,
+        close_choice=1,
+        details="\n".join(lines),
+        details_expanded=True,
+        title="Scheinwerk",
+    )
+    if choice == 0:
+        _ui(lambda: len(publish_all_usd(plan)), "Published {} USD layers")
+
+
+# --- Asset Start and Shot Start (spec §13.2.6) ---------------------------------------
+
+
+def start_asset(node: hou.Node) -> str:
+    """sw_asset_start: the scene's asset, whose skeleton it builds."""
+    project, ctx = _project_and_context()
+    entity = project.entity_at(ctx)
+    if entity.type != "asset":
+        raise ScheinwerkError("Asset Start only works in an asset's scene.")
+    return entity.name
+
+
+def shot_start_layer_menu(node: hou.Node) -> list[str]:
+    """sw_shot_start's `load`: the usd_layer_order layers, then the sequence root layer."""
+    try:
+        project, _ = _project_and_context()
+        order = project.setting("usd_layer_order")
+    except ScheinwerkError:
+        order = []
+    return [i for n in order for i in (n, n)] + ["sequence", "sequence (its root layer)"]
+
+
+def shot_start_files(node: hou.Node) -> list[Path]:
+    """What sw_shot_start loads, weakest first (as the Sublayer LOP lists them): the
+    sequence root layer (when ticked and published) or else the structure layer, then the
+    ticked layers that have a pointer, as in the shot root layer (spec §9.2)."""
+    entity = target_entity(node.evalParm("shot") or None)
+    if entity.type == "asset":
+        raise ScheinwerkError("Shot Start only works in a shot's or sequence's scene.")
+    ticked = node.evalParm("load").split()
+    order = entity.project.setting("usd_layer_order")
+    usd = entity.path / "publish" / "_usd"
+    layers = [usd / n / f"{n}.usd" for n in order if n in ticked]
+    structure = entity.project.root / "shared" / "usd" / "structure.usd"
+    write_structure(structure)  # older projects (spec §9.2)
+    seq_root = entity.path.parent / "_seq" / "publish" / "_usd" / f"{entity.sequence}.usd"
+    use_seq = entity.type == "shot" and "sequence" in ticked and seq_root.is_file()
+    return [seq_root if use_seq else structure, *reversed([p for p in layers if p.is_file()])]
+
+
+def shot_start_file(node: hou.Node, index: int) -> str:
+    """The Sublayer LOP's file `index` (1-based), "" for an unused slot."""
+    files = shot_start_files(node)
+    return files[index - 1].as_posix() if index <= len(files) else ""
+
+
+def shot_start_info(node: hou.Node) -> str:
+    """Info box: the loaded layers, strongest first. Never raises."""
+    try:
+        files = shot_start_files(node)
+        project = target_entity(node.evalParm("shot") or None).project
+    except ScheinwerkError as exc:
+        return str(exc)
+    return "\n".join(["Loaded (strongest first):", *(project.rel(f) for f in reversed(files))])
+
+
+# --- sw_render's source (spec §13.2.6) ------------------------------------------------
+
+
+def render_root(node: hou.Node) -> str:
+    """Published shot: the target's root layer (<shot>.usd, or <seq>.usd for _seq)."""
+    entity = _node_entity(node)
+    if entity.type == "asset":
+        raise ScheinwerkError("Published shot renders a shot or sequence, not an asset.")
+    path = entity.path / "publish" / "_usd" / f"{entity.name}.usd"
+    if not path.is_file():
+        raise NotFound(f"{entity.name} has no published USD layers yet.")
+    return path.as_posix()
 
 
 # --- the importing HDAs: sw_import_sop, sw_import_lop ---------------------------------
@@ -719,11 +944,14 @@ def import_mode(node: hou.Node) -> int:
 
 
 def import_prim(node: hou.Node) -> str:
-    """Default prim path for a reference: /<entity name>."""
+    """Default prim path for a reference: /<entity> in an asset scene, else
+    /world/assets/<entity>, matching the structure layer (spec §9.2)."""
     try:
-        return f"/{_import_entity(node).name}"
+        project, ctx = _project_and_context()
+        name = _import_entity(node).name
     except ScheinwerkError:
         return "/import"
+    return f"/{name}" if ctx.entity_type == "asset" else f"/world/assets/{name}"
 
 
 def import_info(node: hou.Node) -> str:

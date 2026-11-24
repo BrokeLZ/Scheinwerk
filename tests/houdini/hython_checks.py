@@ -213,7 +213,8 @@ seq_work = root / "shots/sq010/_seq/lgt/main/work"
 hou.hipFile.save(str(seq_work / "sq010_lgt_main_v001.hip"))
 assert os.environ["SW_ENTITY_TYPE"] == "sequence" and os.environ["SW_SEQ"] == "sq010"
 assert sw.shots() == [("sq010_0010", (1001, 1010)), ("sq010_0020", (1011, 1020))]
-assert sw.shot_menu()[2:4] == ["sq010_0010", "sq010_0010  1001-1010"]
+menu = sw.shot_menu()
+assert menu[2:6] == ["_seq", "(the sequence itself)", "sq010_0010", "sq010_0010  1001-1010"]
 try:
     sw.publish_path("cam", "abc")
     raise AssertionError("a sequence scene needs a shot")
@@ -231,8 +232,33 @@ assert sw.hda_range(shot_sop) == (1001, 1010)
 fx = next_usd(project.entity("sq010_0020"), "fx")
 (fx / "sq010_0020_fx_v001.usd").write_text("#usda 1.0\n", encoding="utf-8")
 finalize(fx)
-assert sw.layers_below("lgt") == ["$JOB/shots/sq010/sq010_0020/publish/_usd/fx/fx.usd"]
-assert sw.layers_below("layout") == []
+assert not hasattr(sw, "layers_below")  # Shot Start loads layers (spec §13.2.8)
+
+# _seq: the sequence itself, for sequence-wide products
+assert sw.target_entity("_seq").type == "sequence"
+assert "/shots/sq010/_seq/publish/rig/" in sw.publish_path("rig", "abc", shot="_seq")
+seq_node = node_with({"layer": "lgt", "range": 0, "version": 1, "shot": "_seq"})
+assert "/sq010/_seq/publish/_usd/lgt/v001/sq010_lgt_v001.usd" in sw.hda_output(seq_node)
+
+# fps: the USD ROP writes the scene's fps, so a USD publish refuses a mismatch
+assert sw.fps_matches(24) and not sw.fps_matches(25)
+data = json.loads((project.root / "shots/sq010/sq010_0010/entity.json").read_text("utf-8"))
+(project.root / "shots/sq010/sq010_0010/entity.json").write_text(
+    json.dumps({**data, "fps": 25}), encoding="utf-8"
+)
+assert "set the scene to 25 fps" in sw._fps_problem(shot_node)
+assert sw._fps_problem(seq_node) == ""  # the sequence keeps the project's 24
+try:
+    sw._export(shot_node)
+    raise AssertionError("published with the wrong fps")
+except sw.ScheinwerkError:
+    pass
+anim = hou.node("/obj").createNode("null")
+anim.parm("tx").setKeyframe(hou.Keyframe(5, hou.frameToTime(1010)))
+sw.set_fps(25)
+assert hou.fps() == 25 and sw._fps_problem(shot_node) == ""
+assert [round(hou.timeToFrame(k.time())) for k in anim.parm("tx").keyframes()] == [1010]
+sw.set_fps(24)
 
 # --- frame range and clearing ------------------------------------------------------
 sw.set_frame_range((1011, 1020))

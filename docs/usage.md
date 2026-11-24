@@ -422,11 +422,12 @@ This writes `packages/scheinwerk.json` into the preferences of every Houdini ver
 ### What you get
 
 - **Variables follow the scene.** Whenever you open or save a scene inside a project, Houdini gets `$JOB` (the project root) and `$SW_ROOT`, `$SW_ENTITY`, `$SW_DEPT`, `$SW_TASK`, `$SW_CACHE`, … (see [spec §7.2](spec.md#72-environment-variables)). Use them in paths: `$SW_CACHE/sim/sim.$F4.bgeo.sc`. *File → New* clears them.
-- **Frame range.** When you open a shot scene whose frame range differs from the shot's (`entity.json`), Houdini asks whether to apply the shot's range.
+- **Frame range and fps.** When you open a scene whose frame range or fps differs from its asset's or shot's (`entity.json`, else the project's fps), Houdini asks whether to apply them. Keys stay on their frames. Keep the fps right: the USD ROP writes the scene's fps into every layer, so *Scheinwerk Publish USD* refuses to publish from a scene at the wrong fps.
 - **Scheinwerk menu** (main menu bar) and **Scheinwerk shelf** (add it with the `+` tab on the shelf bar):
   - *Save Next Version*: saves the scene as the task's next version (`hero_mdl_main_v004.hip`), keeping `.hip`/`.hipnc`/`.hiplc`. The scene must already be saved in a task's `work/` folder; use the browser's *Copy next version path* for the very first save.
   - *Open Scheinwerk Browser*: the browser from the [GUI](#gui) chapter in a floating panel. You can also dock it: in any pane, *New Pane Tab Type → Scheinwerk*.
   - *Copy Context Path*: copies the scene's path relative to the project, e.g. `assets/char/hero/mdl/main/work/hero_mdl_main_v004.hip`.
+  - *Publish All USD*: exports every *Scheinwerk Publish USD* node in the scene, top of the chain first, after showing you the list. A node whose version already has files gets a new version first, so nothing published is overwritten. Use it when a scene publishes several layers (`geo` and `mtl`, or `layout`, `anim` and `lgt`), so none of them is left stale. Bypassed nodes and task caches are skipped.
 - **Shortcut.** To put *Save Next Version* on Ctrl+Alt+S: *Edit → Hotkeys…*, search for "Save Next Version", assign the key.
 
 ### Paths in parameters
@@ -444,6 +445,22 @@ sw.media_path("render_beauty", "exr")    # …/media/render_beauty/v002/…_v002
 
 They point at the **highest existing version** (v001 if there is none). For a new version, make it first (browser: *Copy next version path*, or an HDA's *New version*). One-line form for a parameter: `__import__("scheinwerk.dcc.houdini", fromlist=["x"]).publish_path("pants", "abc")`.
 
+### Starting a scene
+
+Two HDAs (Tab: *Scheinwerk Asset Start*, *Scheinwerk Shot Start*) go at the top of a LOP network:
+
+- **Asset Start** (`sw_asset_start`, asset scenes only) builds the asset's skeleton: `/hero` (Xform), `/hero/geo/render` and `/hero/geo/proxy` (with the render and proxy purposes) and `/hero/mtl` (Scope). Put your geometry under `/hero/geo/render` (and a light stand-in under `proxy`), materials under `/hero/mtl`. The skeleton is published with the first layer, `geo`.
+- **Shot Start** (`sw_shot_start`, shot and sequence scenes) loads what other scenes published, behind a Layer Break, so none of it is published again from here: the structure layer (or the sequence's root layer, which ends with it), plus the layers ticked in **Load**. Tick the layers made in *other* scenes: `fx` in the main scene, `layout` and `anim` in an fx scene. *Sequence* (on by default) also loads the sequence's own layers. In a sequence scene, *Shot* picks whose layers to load (`_seq`: the sequence's). **Info** lists what is loaded, strongest first; **Reload** re-reads the files after another scene published. Frame range and fps come from the scene (see above).
+
+A typical project:
+
+1. **Asset**, one scene: *Asset Start* → geometry → *Publish USD* `geo` → materials → *Publish USD* `mtl` → *Publish All USD*. Each publish ends with a Layer Break, so `mtl` holds only the materials and their bindings. Variants are yours to author (e.g. *Add Variant*): a `model` variant set for `geo` and a `look` set for `mtl`, on `/hero`. Bind materials on `/hero/geo/render` or higher, so model variants keep them.
+2. **Shot, fx scene**: *Shot Start* (load `layout`, `anim`) → the effect under `/world/fx` → *Publish USD* `fx`.
+3. **Shot, main scene**: *Shot Start* (load `fx`) → *Import USD* the assets (they land under `/world/assets/<asset>`) → *Publish USD* `layout` → animation → *Publish USD* `anim` → cameras under `/cameras`, lights under `/lights`, render settings → *Publish USD* `lgt` → *Publish All USD*.
+4. **Final render**: *Scheinwerk Render* with *Source: Published shot*.
+
+In the working scene, loaded layers sit *below* everything authored in the chain. The published shot orders them by `usd_layer_order` instead. So where two departments change the same prim (fx hiding an animated prop), a live preview can differ from the published shot. The final render from the published shot is always right.
+
 ### Publishing with the HDAs
 
 Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render*:
@@ -454,7 +471,7 @@ Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*
 | `sw_publish_lop` | LOP | `publish/_usd/<layer>/v###/<entity>_<layer>_v###.usd`, relative paths, pointer updated |
 | `sw_render` | LOP | `media/render_<name>/v###/…_v###.####.exr` (Karma) — **work in progress** |
 
-*Scheinwerk Render* is a work in progress: it renders and versions simple Karma renders, but it is far from done and will change.
+*Scheinwerk Render* is a work in progress: it renders and versions simple Karma renders, but it will change.
 
 All three work the same way:
 
@@ -467,7 +484,7 @@ All three work the same way:
 - **Info** (at the bottom, read-only) shows what is on disk and what the button will do. The USD HDA also shows which version the layer's pointer uses:
 
   ```text
-  Layer    asset  (2 versions on disk)
+  Layer    geo  (2 versions on disk)
   Latest   v002 | 1 file | 2026-11-23 15:42 | lorenz
            "first"  from hero_lookdev_main_v004.hip
   Current  v002  (the version the layer's pointer uses)
@@ -476,9 +493,13 @@ All three work the same way:
 
   It updates when you change the name or version and after an export. Changes made outside Houdini show up the next time it updates.
 
-**Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range.
+  It also warns when something would go wrong: a scene at the wrong fps (*Publish USD* refuses to export then), or, for the asset layers `geo` and `mtl`, prims outside `/<asset>` (e.g. a material library at `/materials`), which a shot referencing the asset would never see.
 
-**USD stack.** A department's scene loads the layers below it and publishes only its own. `sw.layers_below("lgt")` lists the existing pointer layers below lighting (fx, anim, layout, per `usd_layer_order`) as `$JOB/…` paths for a Sublayer LOP, or use *Scheinwerk Import USD* (below).
+**Publish USD extras.** **Layer Break After** (on by default) passes the stage on through a Layer Break, so a *Publish USD* further down the same chain writes only what was added after this one. That is what lets one scene publish `geo` then `mtl`, or `layout`, `anim` and `lgt`.
+
+**Render source.** *Scheinwerk Render*'s **Source** is *Live stage* (the input, for quick iterations) or *Published shot*: it renders the shot's published root layer (`sq010_0010.usd`; in a sequence scene with *Shot* `_seq`, the sequence's), with the render settings at `/Render/rendersettings`. That is exactly what was published, so use it for finals. Either way, the render's `version.json` lists the published USD files it used (`usd_files`): shots always follow the current versions of everything, so this is the record of what a render was made from. To reproduce one, *Set as current* those versions.
+
+**Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range. Pick `_seq` (*the sequence itself*) for things the whole sequence shares, like a lighting rig or a set: they go into the sequence's own `publish/`, and every shot's root layer picks them up as its weakest layer.
 
 ### Caching
 
@@ -512,28 +533,31 @@ It reads `.bgeo.sc`, `.vdb`, `.obj` and `.abc` (Alembic arrives as packed geomet
 - *Entity*: as above.
 - *Layer*: empty means **all layers** of the entity (its entry/root layer `hero.usd`; in the picker: *All layers of the entity*), or one layer (`geo`, `lgt`, …).
 - *Version*: `current` (default: the layer's pointer, so *Set as current* and new publishes are followed) or a `v###` to pin one.
-- *Mode*: *Auto* references an asset (at *Primitive Path*, default `/hero`) and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (e.g. `/hero/geo`).
+- *Mode*: *Auto* references an asset and sublayers a shot or sequence layer; or choose *Reference* / *Sublayer* yourself. *Primitive Path* (where a reference lands) defaults to `/hero` in an asset scene and to `/world/assets/hero` in a shot or sequence scene, as the structure layer expects. Assets are referenced through their `defaultPrim`, so build assets under `/<asset name>` (*Asset Start* does that).
 
 When you save the result with *Scheinwerk Publish USD*, the *Use Relative Paths* processor turns these paths into relative ones.
 
 ### Building the HDAs
 
-The HDAs are already in the repo. This section describes what is inside them, for changing or rebuilding one. `uv run pytest -m houdini` uses all five, so run it after any change.
+The HDAs are already in the repo. This section describes what is inside them, for changing or rebuilding one. `uv run pytest -m houdini` uses all seven, so run it after any change.
 
-**Publish and import HDAs** (`sw_publish_sop`, `sw_publish_lop`, `sw_import_sop`, `sw_import_lop`) are built by a script, from ordinary nodes, so you can still open and change them by hand:
+All seven are built by a script, from ordinary nodes, so you can still open and change them by hand:
 
 ```bash
-hython integrations/houdini/build_hdas.py                   # all four
+hython integrations/houdini/build_hdas.py                   # all seven
 hython integrations/houdini/build_hdas.py sw_publish_sop    # just one
 ```
 
 (`hython` is in Houdini's `bin` folder.) It saves `.hdalc` with Indie, `.hdanc` with Apprentice, `.hda` otherwise. **Running it again rebuilds from scratch and replaces hand edits**, so after editing one by hand, either keep doing that or move the change into the script. Inside:
 - *Scheinwerk Publish*: the input → a ROP Geometry Output `export` (set up as described below) and a Switch `load_from_disk` (input 0 = the input, input 1 = a File SOP `load` reading `chs("../output")`, switched by `ch("../load")`) → Null `OUT`.
-- *Scheinwerk Publish USD*: the same with a USD ROP `export` and a Sublayer LOP `load` → `output0`.
+- *Scheinwerk Publish USD*: the same with a USD ROP `export` and a Sublayer LOP `load`, then a Switch `layer_break_after` (input 1 = a Layer Break `break`, switched by `ch("../layer_break")`) → `output0`.
+- *Scheinwerk Asset Start*: Primitive LOPs `asset`, `geo` (three paths) and `mtl` (Scope), whose paths start with `/`chs("../asset")``, then Configure Primitive LOPs `render_purpose` and `proxy_purpose` → `output0`. The `asset` parm is `SW.start_asset(hou.pwd())`.
+- *Scheinwerk Shot Start*: a Sublayer LOP `load` with 12 file slots, each `SW.shot_start_file(hou.pwd().parent(), N)` and enabled while that isn't empty (slot 1 is the weakest), → a Layer Break → `output0`.
+- *Scheinwerk Render*: the input and a Sublayer LOP `published` (`SW.render_root(hou.pwd().parent())`) → a Switch `source` (`ch("../source")`) → a USD Render ROP `render` (Karma; *Render Settings* `/Render/rendersettings` for the published source). The input also goes straight to `output0`.
 - *Scheinwerk Import*: a File SOP `load` reading `chs("../path")` → Null `OUT`.
 - *Scheinwerk Import USD*: the input → a Sublayer LOP and a Reference LOP (both `filepath1` = `chs("../path")`, the reference's `primpath1` = `chs("../primpath")`) → a Switch `mode` (`SW.import_mode(hou.pwd().parent())`: 0 sublayer, 1 reference) → `output0`.
 
-**Scheinwerk Render** (`sw_render`) is built by hand, as follows; the publish HDAs follow the same pattern (plus `target` and `load`), so this also explains them. For each HDA: create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
+To build one by hand instead (or to read what the script does): create a Subnetwork in the right network, build the inside, *Create Digital Asset…* with the operator name from the table, and save it to `integrations/houdini/otls/<name>.hda`. Houdini Indie can only save `.hdalc` and Apprentice `.hdanc`; use that extension instead (`sw_publish_sop.hdalc`). Change the *Library* path in the dialog, otherwise it is saved as `sop_subnet.1.0.hdalc` or similar. In *Type Properties → Parameters* add the parameters below (*Name* must match exactly, so rename the `newparameter` Houdini suggests; labels are up to you).
 
 Houdini keeps copies of earlier saves in `otls/backup/`. Git ignores that folder.
 
@@ -555,6 +579,8 @@ Below, `import sw` stands for `import scheinwerk.dcc.houdini as sw`, and `SW` fo
 | `execute` | Button | Label *Export* (*Render* on `sw_render`). Callback (Python): `import sw; sw.hda_execute(kwargs["node"])`. *Disable When* as `new_version`. |
 | `info` | String | After a separator. Multi-line (tags `editor` 1, `editorlines` 4-7), default Python expression `SW.hda_info(hou.pwd())`, *Disable When* `{ version > -1 }` (always true, so it reads as read-only text). |
 
+Besides these: the publish HDAs have `target`, `choose` and `load`; *Publish USD* also `layer_break` (toggle, default on); *Render* also `source` (*Live stage* / *Published shot*). *Shot Start* has `shot`, `load` (a *Toggle* string menu from `sw.shot_start_layer_menu(kwargs["node"])`, default `sequence`), `reload` and `info` (`SW.shot_start_info(hou.pwd())`).
+
 Menu scripts have to be two lines. Houdini runs a one-line menu script as an expression, so `…; return …` on one line is a `SyntaxError`. Callbacks run as statements, so one line with `;` is fine there.
 
 **Inside each**, one ROP connected to the HDA's input (the ROP may have any name):
@@ -566,7 +592,7 @@ Menu scripts have to be two lines. Houdini runs a one-line menu script as an exp
 
 **`sw_publish_lop`** (LOP network, 1 input): a **USD ROP** (*Output File* `lopoutput`) on the input. Leave the *Use Relative Paths* output processor on and *Output File per Frame* off (both are the defaults). A LOP subnet already contains an `output0` node: wire the input into it too, so the stage passes through.
 
-**`sw_render`** (LOP network, 1 input): a **USD Render ROP** on the input, *Renderer* Karma, *Output Picture* `outputimage`. Leave *Render All Frames with a Single Process* off (the default): the output path is evaluated per frame, which only works with one husk run per frame. Wire the input into `output0` as for `sw_publish_lop`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
+**`sw_render`** (LOP network, 1 input): a **USD Render ROP** fed by the `source` switch, *Renderer* Karma, *Output Picture* `outputimage`. Leave *Render All Frames with a Single Process* off (the default): the output path is evaluated per frame, which only works with one husk run per frame. Wire the input into `output0` as for `sw_publish_lop`. Render in the foreground (*Render to Disk*) so the post-render script finalizes after the frames exist.
 
 The code recognises the HDA by its `product`, `layer` or `render_name` parameter, so the operator names are a convention, not a requirement.
 
@@ -578,6 +604,8 @@ The code recognises the HDA by its `product`, `layer` or `render_name` parameter
 | `$JOB` is still the old folder | Save or reopen the scene: variables are set on load and save. |
 | "This scene isn't saved inside a Scheinwerk asset or shot" | Save the scene into a task's `work/` folder first (browser: *Copy next version path*). |
 | "This is a scene of sequence sq010: choose the shot" | Pick the node's *Shot*, or set the `SW_SHOT` context option. |
+| "The scene runs at 24 fps, sq010_0010 at 25" | Reopen the scene and accept the fps Scheinwerk offers, or set it in Houdini's *Global Animation Options* (playbar), keeping keys on their frames. |
+| *Published shot* says "has no published USD layers yet" | Publish at least one layer of that shot first. |
 
 For developers: `uv run pytest -m houdini` runs the integration inside every Houdini found on the machine (slow, so it isn't part of the normal test run).
 

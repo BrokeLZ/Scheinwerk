@@ -5,6 +5,7 @@
     <memberTool name="scheinwerk_save_next_version"/>
     <memberTool name="scheinwerk_open_browser"/>
     <memberTool name="scheinwerk_copy_context_path"/>
+    <memberTool name="scheinwerk_publish_all_usd"/>
   </toolshelf>
 
   <tool name="scheinwerk_save_next_version" label="Save Next" icon="BUTTONS_save">
@@ -20,5 +21,10 @@ sw.ui_open_browser()]]></script>
   <tool name="scheinwerk_copy_context_path" label="Copy Path" icon="BUTTONS_copy">
     <script scriptType="python"><![CDATA[import scheinwerk.dcc.houdini as sw
 sw.ui_copy_context_path()]]></script>
+  </tool>
+
+  <tool name="scheinwerk_publish_all_usd" label="Publish USD" icon="ROP_usd">
+    <script scriptType="python"><![CDATA[import scheinwerk.dcc.houdini as sw
+sw.ui_publish_all_usd()]]></script>
   </tool>
 </shelfDocument>

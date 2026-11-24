@@ -17,6 +17,11 @@
         <label>Copy Context Path</label>
         <scriptCode><![CDATA[import scheinwerk.dcc.houdini as sw; sw.ui_copy_context_path()]]></scriptCode>
       </scriptItem>
+      <separatorItem/>
+      <scriptItem id="scheinwerk_publish_all_usd">
+        <label>Publish All USD</label>
+        <scriptCode><![CDATA[import scheinwerk.dcc.houdini as sw; sw.ui_publish_all_usd()]]></scriptCode>
+      </scriptItem>
     </subMenu>
   </menuBar>
 </mainMenu>

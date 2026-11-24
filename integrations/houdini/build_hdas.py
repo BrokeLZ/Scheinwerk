@@ -1,11 +1,11 @@
-"""Build the publish and import HDAs into otls/ (run with hython).
+"""Build the Scheinwerk HDAs into otls/ (run with hython).
 
-    hython integrations/houdini/build_hdas.py [hda ...]      (default: all four)
+    hython integrations/houdini/build_hdas.py [hda ...]      (default: all seven)
 
-sw_publish_sop, sw_publish_lop, sw_import_sop, sw_import_lop. They are plain node networks
-(no Python SOPs), so they can be opened and changed by hand afterwards (docs/usage.md,
-"Building the HDAs"). Running this again rebuilds them from scratch and replaces hand
-edits. sw_render is still hand-built and not touched.
+sw_publish_sop, sw_publish_lop, sw_asset_start, sw_shot_start, sw_render, sw_import_sop,
+sw_import_lop. They are plain node networks (no Python SOPs or LOPs), so they can be opened
+and changed by hand afterwards (docs/usage.md, "Building the HDAs"). Running this again
+rebuilds them from scratch and replaces hand edits.
 """
 
 from __future__ import annotations
@@ -217,12 +217,150 @@ def build_publish_lop() -> None:
     switch.setInput(0, source)
     switch.setInput(1, load)
     switch.parm("input").setExpression('ch("../load")', hou.exprLanguage.Hscript)
+    # Layer Break After: what comes below writes only what is added after this publish
+    brk = net.createNode("layerbreak", "break")
+    brk.setInput(0, switch)
+    after = net.createNode("switch", "layer_break_after")
+    after.setInput(0, switch)
+    after.setInput(1, brk)
+    after.parm("input").setExpression('ch("../layer_break")', hou.exprLanguage.Hscript)
     output = net.node("output0") or net.createNode("output", "output0")
-    output.setInput(0, switch)
+    output.setInput(0, after)
     output.setDisplayFlag(True)
     net.layoutChildren()
     parms = publish_parms("layer", ext=False, range_default=0)
+    layer_break = hou.ToggleParmTemplate("layer_break", "Layer Break After", default_value=True)
+    layer_break.setHelp("Publishes further down this chain write only what is added after it.")
+    parms.insert(parms.index(next(p for p in parms if p.name() == "load")) + 1, layer_break)
     save_asset(net, "sw_publish_lop", "Scheinwerk Publish USD", "LOP_subnet", parms, (1, 1))
+
+
+def build_asset_start() -> None:
+    """The asset skeleton: /<asset>, /<asset>/geo/{render,proxy} with purposes,
+    /<asset>/mtl (spec §9.3). Prim paths come from the read-only `asset` parm."""
+    net = hou.node("/stage").createNode("subnet", "sw_asset_start")
+    root = '/`chs("../asset")`'
+    previous = None
+    for node_name, paths, prim_type in (
+        ("asset", root, "UsdGeomXform"),
+        ("geo", f"{root}/geo {root}/geo/render {root}/geo/proxy", "UsdGeomXform"),
+        ("mtl", f"{root}/mtl", "UsdGeomScope"),
+    ):
+        prim = net.createNode("primitive", node_name)
+        prim.parm("primpath").set(paths)
+        prim.parm("primtype").set(prim_type)
+        if previous is not None:
+            prim.setInput(0, previous)
+        previous = prim
+    for purpose in ("render", "proxy"):
+        configure = net.createNode("configureprimitive", f"{purpose}_purpose")
+        configure.setInput(0, previous)
+        configure.parm("primpattern").set(f"{root}/geo/{purpose}")
+        configure.parm("setpurpose").set(1)
+        configure.parm("purpose").set(purpose)
+        previous = configure
+    output = net.node("output0") or net.createNode("output", "output0")
+    output.setInput(0, previous)
+    output.setDisplayFlag(True)
+    net.layoutChildren()
+    asset = expression("asset", "Asset", f"{SW}.start_asset(hou.pwd())")
+    asset.setConditional(hou.parmCondType.DisableWhen, '{ asset == "" } { asset != "" }')
+    asset.setHelp("The scene's asset. Asset Start only works in an asset's scene.")
+    icon = hou.nodeType(hou.lopNodeTypeCategory(), "primitive").icon()
+    save_asset(net, "sw_asset_start", "Scheinwerk Asset Start", icon, [asset], (0, 0))
+
+
+SHOT_START_SLOTS = 12  # Sublayer LOP files: the structure or sequence layer plus the layers
+
+
+def build_shot_start() -> None:
+    """Loads the structure layer (or the sequence root layer) and the ticked published
+    layers behind a Layer Break, so none of it is published again (spec §13.2.6)."""
+    net = hou.node("/stage").createNode("subnet", "sw_shot_start")
+    sublayer = net.createNode("sublayer", "load")
+    sublayer.parm("num_files").set(SHOT_START_SLOTS)
+    for index in range(1, SHOT_START_SLOTS + 1):
+        call = f"{SW}.shot_start_file(hou.pwd().parent(), {index})"
+        sublayer.parm(f"filepath{index}").setExpression(call, hou.exprLanguage.Python)
+        sublayer.parm(f"enable{index}").setExpression(f'{call} != ""', hou.exprLanguage.Python)
+    brk = net.createNode("layerbreak", "break")
+    brk.setInput(0, sublayer)
+    output = net.node("output0") or net.createNode("output", "output0")
+    output.setInput(0, brk)
+    output.setDisplayFlag(True)
+    net.layoutChildren()
+    shot = hou.StringParmTemplate(
+        "shot", "Shot", 1, default_value=("",),
+        item_generator_script=f"{IMPORT}\nreturn sw.shot_menu()",
+        item_generator_script_language=PY, menu_type=hou.menuType.Normal,
+    )  # fmt: skip
+    load = hou.StringParmTemplate(
+        "load", "Load", 1, default_value=("sequence",),
+        item_generator_script=f'{IMPORT}\nreturn sw.shot_start_layer_menu(kwargs["node"])',
+        item_generator_script_language=PY, menu_type=hou.menuType.StringToggle,
+    )  # fmt: skip
+    load.setHelp("The layers published from other scenes, e.g. fx in the main scene.")
+    reload = hou.ButtonParmTemplate("reload", "Reload")
+    reload.setScriptCallback('hou.pwd().node("load").parm("reload").pressButton()')
+    reload.setScriptCallbackLanguage(PY)
+    parms = [
+        shot,
+        load,
+        reload,
+        hou.SeparatorParmTemplate("info_sep"),
+        info(f"{SW}.shot_start_info(hou.pwd())", '{ load == "" } { load != "" }'),
+    ]
+    icon = hou.nodeType(hou.lopNodeTypeCategory(), "sublayer").icon()
+    save_asset(net, "sw_shot_start", "Scheinwerk Shot Start", icon, parms, (0, 0))
+
+
+def build_render() -> None:
+    """Karma through a USD Render ROP, one husk run per frame. Source: the input (live
+    stage) or the target's published root layer (spec §13.2.6)."""
+    net = hou.node("/stage").createNode("subnet", "sw_render")
+    source_in = net.indirectInputs()[0]
+    published = net.createNode("sublayer", "published")
+    published.parm("filepath1").setExpression(
+        f"{SW}.render_root(hou.pwd().parent())", hou.exprLanguage.Python
+    )
+    source = net.createNode("switch", "source")
+    source.setInput(0, source_in)
+    source.setInput(1, published)
+    source.parm("input").setExpression('ch("../source")', hou.exprLanguage.Hscript)
+    rop = net.createNode("usdrender_rop", "render")
+    rop.setInput(0, source)
+    wire_export(rop, "outputimage")
+    # the published stack's settings: sublayering drops the lighting layer's default
+    rop.parm("rendersettings").setExpression(
+        'ifs(ch("../source") == 1, "/Render/rendersettings", "")', hou.exprLanguage.Hscript
+    )
+    output = net.node("output0") or net.createNode("output", "output0")
+    output.setInput(0, source_in)
+    output.setDisplayFlag(True)
+    net.layoutChildren()
+    shot = hou.StringParmTemplate(
+        "shot", "Shot", 1, default_value=("",),
+        item_generator_script=f"{IMPORT}\nreturn sw.shot_menu()",
+        item_generator_script_language=PY, menu_type=hou.menuType.Normal,
+    )  # fmt: skip
+    source_menu = hou.MenuParmTemplate(
+        "source", "Source", menu_items=("live", "published"),
+        menu_labels=("Live stage (the input)", "Published shot"), default_value=0,
+    )  # fmt: skip
+    empty = '{ render_name == "" }'
+    parms = [
+        menu_string("render_name", "Render Name", "hda_name_menu", callback="hda_name_changed"),
+        source_menu,
+        *versioning("render_name", ext=False, range_default=1),
+        shot,
+        hou.StringParmTemplate("comment", "Comment", 1, default_value=("",)),
+        expression("output", "Output", f"{SW}.hda_output(hou.pwd())"),
+        button("execute", "Render", "hda_execute", empty),
+        hou.SeparatorParmTemplate("info_sep"),
+        info(f"{SW}.hda_info(hou.pwd())", "{ version > -1 }"),
+    ]
+    icon = hou.nodeType(hou.lopNodeTypeCategory(), "usdrender_rop").icon()
+    save_asset(net, "sw_render", "Scheinwerk Render", icon, parms, (1, 1))
 
 
 def import_parms(name_parm: str, name_label: str, version_default: str) -> list:
@@ -303,6 +441,9 @@ def build_import_lop() -> None:
 BUILDERS = {
     "sw_publish_sop": build_publish_sop,
     "sw_publish_lop": build_publish_lop,
+    "sw_asset_start": build_asset_start,
+    "sw_shot_start": build_shot_start,
+    "sw_render": build_render,
     "sw_import_sop": build_import_sop,
     "sw_import_lop": build_import_lop,
 }
