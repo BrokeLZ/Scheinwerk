@@ -363,7 +363,7 @@ Missing keys are filled from these defaults when reading; a missing or broken fi
    - **Asset**: two files. `payload.usd` sublayers the asset's layers in the asset order (§9.3). `<asset>.usd` is the *component*: one prim `/<asset>` with `kind = "component"`, `assetInfo` (name) and a payload to `./payload.usd`, and `defaultPrim` = the asset. Referencing an asset therefore loads nothing heavy until its payload is loaded.
    - **Shot**: `<shot>.usd` sublayers the shot's layers (`usd_layer_order`, then A–Z), then as the weakest the sequence root layer `../../../_seq/publish/_usd/<seq>.usd` when it exists, else the structure layer. The sequence root layer ends with the structure layer, so a shot's stack holds it exactly once. No `defaultPrim`.
    - **Sequence**: `_seq/publish/_usd/<seq>.usd` sublayers the sequence's own layers like a shot, then the structure layer. When it is created, the root layers of all the sequence's shots are rewritten so they include it.
-   - **Structure** (`shared/usd/structure.usd`, one per project): the shot hierarchy, so no department layer has to define it and publishes can come from any file in any order. Core writes it when the project is created, and in older projects whenever a root layer is written or *Shot Start* (§13.2) loads it and the file is missing. It is never overwritten and not versioned. A project may change it, but the HDA defaults (§13.2) assume this convention. Everything spatial lives under one transformable root, `/world`, so a transform on it moves geometry, cameras and lights together; render settings are not spatial and stay outside. All of them are Xforms. Groups that hold assets or fx have kind `group`, so an asset below them stays a model; cameras and lights hold no models and have no kind. Not Scopes: Houdini's Camera and Light LOPs create a missing parent as an Xform, and that layer's type would win over the structure layer's, so the prim's type would depend on which layers are loaded. Xforms also let a department transform all cameras or lights at once:
+   - **Structure** (`shared/usd/structure.usd`, one per project): the shot hierarchy, so no department layer has to define it and publishes can come from any file in any order. Core writes it when the project is created, and in older projects whenever a root layer is written or *Shot Start* (§13.2) loads it and the file is missing. It is never overwritten and not versioned. A project may change it, but the HDA defaults (§13.2) assume this convention. Everything spatial lives under one transformable root, `/world`, so a transform on it moves geometry, cameras and lights together; render settings are not spatial and stay outside. All of them are Xforms with kind `group`, like `/world` itself, so an asset below them stays a model (`group`, not `assembly`: an assembly is a published aggregate asset, such as a set). Not Scopes: Houdini's Camera and Light LOPs create a missing parent as an Xform, and that layer's type would win over the structure layer's, so the prim's type would depend on which layers are loaded. Xforms also let a department transform all cameras or lights at once:
 
      | Prim | Type, kind | Filled by |
      | --- | --- | --- |
@@ -372,8 +372,8 @@ Missing keys are filled from these defaults when reading; a missing or broken fi
      | `/world/props` | Xform, `group` | layout: assets of category `prop`, any other category and assets without one |
      | `/world/env` | Xform, `group` | layout: assets of category `env`, set dressing |
      | `/world/fx` | Xform, `group` | fx |
-     | `/world/cameras` | Xform | layout, anim |
-     | `/world/lights` | Xform | lighting |
+     | `/world/cameras` | Xform, `group` | layout, anim |
+     | `/world/lights` | Xform, `group` | lighting |
      | `/Render` | Scope | lighting: render settings and products (Karma's default location) |
 5. **Time metadata.** Published layers carry the fps of the scene that wrote them (Houdini's USD ROP always writes it), and the integration keeps the scene at the entity's fps (§13.2 item 2). Every pointer, entry, payload and root layer core writes carries `framesPerSecond` and `timeCodesPerSecond` = the entity's fps (its `entity.json` override, else the project's; written like the JSON value: `24`, `23.976`). USD rescales a sublayer, reference or payload whose `timeCodesPerSecond` differs from the layer that includes it, and a layer without one counts as 24, so without this a 25 fps publish would be retimed (keys at 1001 land at 961). Shot root layers also carry `startTimeCode`/`endTimeCode` = the shot's frames (when set), so usdview and husk open on the right range; sequence root layers carry no range (it is derived from the shots and would go stale). `set_frames` rewrites the shot's root layer if it exists. A changed fps reaches a layer the next time core rewrites it (publish, set-current, `set_frames`). The structure layer has no time metadata: it holds no time samples.
 6. **References stay in `publish/`.** Everything a published layer points at (sublayers, references, payloads, textures, volumes, caches) lives under a `publish/` folder: in the layer's own version folder, in a version of a product or another layer, or another entity's entry/root layer or pointer. Never under `work/` or `cache/`: those change, and `cache/` is not synced (§9.5), so the published layer would change or break on the other machine. Heavy per-frame data that belongs to one layer (e.g. the VDBs of an fx layer) goes into that layer's version folder next to the main file (`{entity}_{layer}_v###.####.vdb`); data several layers or entities use goes into a product (`publish/<product>/v###/`). `sw doctor` reports violations (§11).
@@ -490,11 +490,15 @@ def Xform "world" (
     {
     }
 
-    def Xform "cameras"
+    def Xform "cameras" (
+        kind = "group"
+    )
     {
     }
 
-    def Xform "lights"
+    def Xform "lights" (
+        kind = "group"
+    )
     {
     }
 }

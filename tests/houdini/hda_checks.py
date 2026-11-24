@@ -359,7 +359,11 @@ fx_start = stage.createNode("sw_shot_start", exact_type_name=True)
 assert fx_start.evalParm("load") == "sequence"
 loaded = fx_start.evalParm("info").splitlines()
 assert loaded == ["Loaded (strongest first):", "shared/usd/structure.usd"], loaded
-for prim, kind in (("/world/chars", "group"), ("/world/cameras", ""), ("/world/lights", "")):
+for prim, kind in (
+    ("/world/chars", "group"),
+    ("/world/cameras", "group"),
+    ("/world/lights", "group"),
+):
     found = fx_start.stage().GetPrimAtPath(prim)
     assert (found.GetTypeName(), found.GetKind()) == ("Xform", kind), prim
 assert fx_start.stage().GetPrimAtPath("/Render").GetTypeName() == "Scope"

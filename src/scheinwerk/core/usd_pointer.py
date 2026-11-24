@@ -24,16 +24,12 @@ ASSET_GROUPS = {"char": "chars", "prop": "props", "env": "env"}
 
 
 def _structure() -> str:
-    """Everything spatial under /world, all Xforms: the groups that hold assets and fx have
-    kind group (so assets below them stay models), cameras and lights none. Xforms, not
-    Scopes: Houdini creates a missing parent as an Xform, and a stronger layer's type
-    would win. /Render (render settings) is not spatial and stays outside."""
+    """Everything spatial under /world, all Xforms with kind group, like /world itself (so
+    assets below them stay models). Xforms, not Scopes: Houdini creates a missing parent as
+    an Xform, and a stronger layer's type would win. /Render (render settings) is not
+    spatial and stays outside."""
     group = '    def Xform "{}" (\n        kind = "group"\n    )\n    {{\n    }}\n'
-    plain = '    def Xform "{}"\n    {{\n    }}\n'
-    body = "\n".join(
-        [*(group.format(n) for n in ("chars", "props", "env", "fx")),
-         *(plain.format(n) for n in ("cameras", "lights"))]
-    )  # fmt: skip
+    body = "\n".join(group.format(n) for n in ("chars", "props", "env", "fx", "cameras", "lights"))
     world = f'def Xform "world" (\n    kind = "group"\n)\n{{\n{body}}}\n'
     return f'#usda 1.0\n\n{world}\ndef Scope "Render"\n{{\n}}\n'
 
