@@ -27,7 +27,12 @@ from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
 from scheinwerk.core.publish import finalize
 from scheinwerk.core.templates import format_version, parse_version, validate_name
-from scheinwerk.core.usd_pointer import asset_prim_path, write_structure
+from scheinwerk.core.usd_pointer import (
+    ASSET_LAYER_ORDER,
+    asset_prim_path,
+    layers_below,
+    write_structure,
+)
 from scheinwerk.core.versions import Product, Version, file_sequences
 
 log = logging.getLogger("scheinwerk.houdini")
@@ -408,9 +413,29 @@ def hda_output(node: hou.Node) -> str:
     return product.file_path(hda_version(node), ext, _frame(frames)).as_posix()
 
 
+def hda_load_files(node: hou.Node) -> list[Path]:
+    """sw_publish_lop's Load from Disk, weakest first (as the Sublayer LOP lists them): the
+    published layers below this one (mtl: the geo; a shot layer: the weaker layers and the
+    structure), then the written file. So the stage doesn't lose what came before, and
+    nothing upstream cooks (spec §13.2)."""
+    entity = _node_entity(node)
+    if entity.type != "asset":
+        write_structure(entity.project.root / "shared" / "usd" / "structure.usd")
+    below = layers_below(entity, node.evalParm("layer"))
+    return [*reversed(below), Path(hda_output(node))]
+
+
+def hda_load_file(node: hou.Node, index: int) -> str:
+    """The load Sublayer LOP's file `index` (1-based), "" for an unused slot."""
+    files = hda_load_files(node)
+    return files[index - 1].as_posix() if index <= len(files) else ""
+
+
 def hda_name_menu(node: hou.Node) -> list[str]:
     """For the name parm's menu: the entity's existing products, USD layers or renders
-    (`render_*` media, shown without the prefix)."""
+    (`render_*` media, shown without the prefix). USD layers start with the entity's
+    standard layers in working order, `(new)` while unpublished: geo, mtl for an asset,
+    usd_layer_order (weakest first) for a shot or sequence."""
     try:
         entity = _node_entity(node)
     except ScheinwerkError:
@@ -419,6 +444,15 @@ def hda_name_menu(node: hou.Node) -> list[str]:
         names = [f.name for f in entity.project.scan(_task().cache_dir)]
     elif node.parm("layer"):
         names = [p.name for p in entity.products(usd=True)]
+        order = (
+            ASSET_LAYER_ORDER
+            if entity.type == "asset"
+            else entity.project.setting("usd_layer_order")
+        )
+        standard = list(reversed(order))
+        labels = [f"{n} (new)" if n not in names else n for n in standard]
+        rest = [n for n in names if n not in standard]
+        return [i for pair in zip(standard + rest, labels + rest, strict=True) for i in pair]
     elif node.parm("render_name"):
         names = [m.name[7:] for m in entity.media() if m.name.startswith("render_")]
     else:

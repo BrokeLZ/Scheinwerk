@@ -204,6 +204,18 @@ def publish_parms(name_parm: str, ext: bool, range_default: int) -> list:
     ]
 
 
+LOAD_SLOTS = 12  # Sublayer LOP files: the structure or sequence layer plus the layers
+
+
+def load_slots(sublayer, function: str) -> None:
+    """Fill a Sublayer LOP's files from `sw.<function>(node, index)`, "" = unused."""
+    sublayer.parm("num_files").set(LOAD_SLOTS)
+    for index in range(1, LOAD_SLOTS + 1):
+        call = f"{SW}.{function}(hou.pwd().parent(), {index})"
+        sublayer.parm(f"filepath{index}").setExpression(call, hou.exprLanguage.Python)
+        sublayer.parm(f"enable{index}").setExpression(f'{call} != ""', hou.exprLanguage.Python)
+
+
 def build_publish_sop() -> None:
     geo = hou.node("/obj").createNode("geo")
     net = geo.createNode("subnet", "sw_publish_sop")
@@ -232,8 +244,8 @@ def build_publish_lop() -> None:
     export = net.createNode("usd_rop", "export")
     export.setInput(0, source)
     wire_export(export, "lopoutput")  # Use Relative Paths stays on (the default)
-    load = net.createNode("sublayer", "load")
-    chs(load, "filepath1", "output")
+    load = net.createNode("sublayer", "load")  # the written file on the layers below it
+    load_slots(load, "hda_load_file")
     switch = net.createNode("switch", "load_from_disk")
     switch.setInput(0, source)
     switch.setInput(1, load)
@@ -292,19 +304,12 @@ def build_asset_start() -> None:
     save_asset(net, "sw_asset_start", "Scheinwerk Asset Start", icon, [asset], (0, 0))
 
 
-SHOT_START_SLOTS = 12  # Sublayer LOP files: the structure or sequence layer plus the layers
-
-
 def build_shot_start() -> None:
     """Loads the structure layer (or the sequence root layer) and the ticked published
     layers behind a Layer Break, so none of it is published again (spec §13.2.6)."""
     net = hou.node("/stage").createNode("subnet", "sw_shot_start")
     sublayer = net.createNode("sublayer", "load")
-    sublayer.parm("num_files").set(SHOT_START_SLOTS)
-    for index in range(1, SHOT_START_SLOTS + 1):
-        call = f"{SW}.shot_start_file(hou.pwd().parent(), {index})"
-        sublayer.parm(f"filepath{index}").setExpression(call, hou.exprLanguage.Python)
-        sublayer.parm(f"enable{index}").setExpression(f'{call} != ""', hou.exprLanguage.Python)
+    load_slots(sublayer, "shot_start_file")
     brk = net.createNode("layerbreak", "break")
     brk.setInput(0, sublayer)
     output = net.node("output0") or net.createNode("output", "output0")

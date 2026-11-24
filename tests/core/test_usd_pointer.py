@@ -11,6 +11,7 @@ from scheinwerk.core.project import Project
 from scheinwerk.core.usd_pointer import (
     STRUCTURE,
     asset_prim_path,
+    layers_below,
     read_pointer,
     write_component,
     write_pointer,
@@ -195,3 +196,51 @@ def test_read_pointer(tmp_path: Path) -> None:
     assert read_pointer(path) == "./v003/hero_geo_v003.usd"
     path.write_text("garbage", encoding="utf-8")
     assert read_pointer(path) is None
+
+
+def published(entity, *layers: str) -> None:
+    for layer in layers:
+        pointer = entity.path / "publish/_usd" / layer / f"{layer}.usd"
+        pointer.parent.mkdir(parents=True)
+        write_pointer(pointer, f"./v001/{entity.name}_{layer}_v001.usd", fps=24)
+
+
+def test_layers_below_an_asset_layer(proj: Project) -> None:
+    # What a version of `layer` sits on: the weaker published layers (asset order: mtl,
+    # geo, then the rest A-Z), so loading mtl from disk also loads the geo (spec §13.2).
+    hero = proj.create_asset("hero")
+    usd = hero.path / "publish/_usd"
+    assert layers_below(hero, "mtl") == []  # nothing published yet
+    published(hero, "geo", "mtl", "groom")
+    assert layers_below(hero, "mtl") == [usd / "geo/geo.usd", usd / "groom/groom.usd"]
+    assert layers_below(hero, "geo") == [usd / "groom/groom.usd"]
+    assert layers_below(hero, "groom") == []
+    assert layers_below(hero, "zzz") == []  # a new layer: weakest, A-Z after groom
+
+
+def test_layers_below_a_shot_layer_end_with_the_structure(proj: Project) -> None:
+    shot = proj.create_shot("sq010_0010")
+    usd = shot.path / "publish/_usd"
+    structure = proj.root / "shared/usd/structure.usd"
+    published(shot, "lgt", "anim", "layout")
+    # usd_layer_order: lgt, fx, anim, layout; fx is not published
+    assert layers_below(shot, "lgt") == [
+        usd / "anim/anim.usd",
+        usd / "layout/layout.usd",
+        structure,
+    ]
+    assert layers_below(shot, "fx") == [usd / "anim/anim.usd", usd / "layout/layout.usd", structure]
+    assert layers_below(shot, "layout") == [structure]
+    assert layers_below(shot, "extra") == [structure]  # not in the order: after it
+
+
+def test_layers_below_a_shot_layer_end_with_the_sequence_root(proj: Project) -> None:
+    shot = proj.create_shot("sq010_0010")
+    seq = proj.entity("sq010")
+    published(seq, "lgt")
+    seq_root = seq.path / "publish/_usd/sq010.usd"
+    seq_root.write_text("#usda 1.0\n", encoding="utf-8")
+    published(shot, "anim")
+    assert layers_below(shot, "lgt") == [shot.path / "publish/_usd/anim/anim.usd", seq_root]
+    structure = proj.root / "shared/usd/structure.usd"
+    assert layers_below(seq, "fx") == [structure]  # the sequence's lgt is stronger than fx

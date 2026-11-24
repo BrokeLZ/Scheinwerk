@@ -94,8 +94,7 @@ def write_entity_layers(entity: Entity) -> None:
     the sequence.
     """
     usd = entity.path / "publish" / "_usd"
-    names = [d.name for d in entity.project.scan(usd) if (d / f"{d.name}.usd").is_file()]
-    layers = [f"./{n}/{n}.usd" for n in _ordered(entity, names)]
+    layers = [f"./{n}/{n}.usd" for n in _ordered(entity, _published(entity))]
     fps = entity.fps
     if entity.type == "asset":
         write_root_layer(usd / "payload.usd", layers, fps=fps)
@@ -105,10 +104,9 @@ def write_entity_layers(entity: Entity) -> None:
     write_structure(entity.project.root / "shared" / "usd" / "structure.usd")
     root = usd / f"{entity.name}.usd"
     if entity.type == "shot":
-        seq_root = entity.path.parent / "_seq" / "publish" / "_usd" / f"{entity.sequence}.usd"
         weakest = (
             f"../../../_seq/publish/_usd/{entity.sequence}.usd"
-            if seq_root.is_file()
+            if _seq_root(entity).is_file()
             else STRUCTURE_FROM_ROOT
         )
         write_root_layer(root, [*layers, weakest], fps=fps, frames=entity.frames)
@@ -120,6 +118,22 @@ def write_entity_layers(entity: Entity) -> None:
         for shot in entity.project.shots(entity.name):
             if (shot.path / "publish" / "_usd" / f"{shot.name}.usd").is_file():
                 write_entity_layers(shot)
+
+
+def layers_below(entity: Entity, layer: str) -> list[Path]:
+    """What a version of `layer` sits on, strongest first, as in the entity's entry/root
+    layer: the weaker layers that have a pointer, then for a shot the sequence root layer
+    (if published) else the structure layer, for a sequence the structure layer. Loading
+    one layer from disk loads these with it (spec §13.2)."""
+    usd = entity.path / "publish" / "_usd"
+    names = _ordered(entity, sorted({*_published(entity), layer}))
+    below = [usd / n / f"{n}.usd" for n in names[names.index(layer) + 1 :]]
+    if entity.type == "asset":
+        return below
+    seq_root = _seq_root(entity) if entity.type == "shot" else None
+    if seq_root is not None and seq_root.is_file():
+        return [*below, seq_root]
+    return [*below, entity.project.root / "shared" / "usd" / "structure.usd"]
 
 
 def asset_prim_path(asset: Entity) -> str:
@@ -138,6 +152,16 @@ def read_pointer(path: Path) -> str | None:
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _published(entity: Entity) -> list[str]:
+    """The entity's USD layers that have a pointer."""
+    usd = entity.path / "publish" / "_usd"
+    return [d.name for d in entity.project.scan(usd) if (d / f"{d.name}.usd").is_file()]
+
+
+def _seq_root(shot: Entity) -> Path:
+    return shot.path.parent / "_seq" / "publish" / "_usd" / f"{shot.sequence}.usd"
 
 
 def _ordered(entity: Entity, names: list[str]) -> list[str]:

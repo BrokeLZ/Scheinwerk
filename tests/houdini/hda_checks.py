@@ -97,7 +97,8 @@ usd = hero.path / "publish/_usd"
 assert lop.evalParm("version") == 1 and lop.parm("range").evalAsString() == "current"
 lop.parm("execute").pressButton()  # no layer: nothing happens
 assert not usd.exists()
-assert lop.parm("layer").menuItems() == ()
+assert lop.parm("layer").menuItems() == ("geo", "mtl")  # hints before any publish
+assert lop.parm("layer").menuLabels() == ("geo (new)", "mtl (new)")
 lop.parm("layer").set("asset")
 lop.parm("new_version").pressButton()
 assert lop.evalParm("version") == 1 and not usd.exists()
@@ -108,7 +109,7 @@ assert "@./asset/asset.usd@" in (usd / "payload.usd").read_text(encoding="utf-8"
 assert 'kind = "component"' in (usd / "hero.usd").read_text(encoding="utf-8")
 assert lop.stage().GetPrimAtPath("/sphere1"), "the stage must pass through"
 assert "Current  v001" in lop.evalParm("info"), lop.evalParm("info")
-assert lop.parm("layer").menuItems() == ("asset",)
+assert lop.parm("layer").menuItems() == ("geo", "mtl", "asset")
 
 # a frame range: still one .usd, with time samples over the range
 lop.parm("range").set("custom")
@@ -333,6 +334,11 @@ assert names(usd / "geo/v002") == ["hero_geo_v002.usd", "version.json"]
 assert names(usd / "mtl/v001") == ["hero_mtl_v001.usd", "version.json"]
 payload = (usd / "payload.usd").read_text(encoding="utf-8")
 assert payload.index("./mtl/") < payload.index("./geo/") < payload.index("./asset/"), payload
+pub_mtl.parm("load").set(1)  # the mtl from disk, on the published geo below it
+loaded = pub_mtl.stage()
+assert loaded.GetPrimAtPath("/hero/geo/render/body").GetTypeName() == "Sphere"
+assert loaded.GetPrimAtPath("/hero/mtl/red")
+pub_mtl.parm("load").set(0)
 mtl_layer = Sdf.Layer.FindOrOpen(str(usd / "mtl/v001/hero_mtl_v001.usd"))
 assert mtl_layer.GetPrimAtPath("/hero/mtl/red")
 assert not mtl_layer.GetPrimAtPath("/hero/geo/render/body")
@@ -409,6 +415,11 @@ assert refs and refs[0].assetPath.startswith("../"), refs  # file-relative, to h
 lgt_layer = Sdf.Layer.FindOrOpen(str(shot_usd / "lgt/v001/sq010_0010_lgt_v001.usd"))
 assert not lgt_layer.GetPrimAtPath("/world/chars/hero"), "layout isn't published again"
 assert lgt_layer.GetPrimAtPath("/world/cameras/camera1")
+pub_lgt.parm("load").set(1)  # lgt from disk on fx, layout and the structure
+loaded = pub_lgt.stage()
+for prim in ("/world/cameras/camera1", "/world/fx/ball", "/world/chars/hero", "/world/lights"):
+    assert loaded.GetPrimAtPath(prim), prim
+pub_lgt.parm("load").set(0)
 
 # --- the final render, from the published shot; it records what it used
 final = create(stage, "sw_render", pub_lgt)

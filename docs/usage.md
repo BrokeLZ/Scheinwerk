@@ -475,7 +475,7 @@ Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*
 
 All three work the same way:
 
-- **Name** (*Product*, *Layer* or *Render Name*): type a new name, or pick an existing one from the menu next to the field, or with **Choose…** (on *Scheinwerk Publish* and *Publish USD*), which opens the browser as a picker. It only accepts this scene's asset or shot (in a sequence scene: one of its shots, which also sets *Shot*). To publish something new into a shot, choose just the shot and keep the name you typed. Picking one switches *Version* to its newest version. While the name is empty, *New Version* and *Export*/*Render* are greyed out, and nothing can be written without one.
+- **Name** (*Product*, *Layer* or *Render Name*): type a new name, or pick an existing one from the menu next to the field (on *Publish USD* the menu always starts with the standard layers, `geo` and `mtl` in an asset scene, marked *(new)* until they are published), or with **Choose…** (on *Scheinwerk Publish* and *Publish USD*), which opens the browser as a picker. It only accepts this scene's asset or shot (in a sequence scene: one of its shots, which also sets *Shot*). To publish something new into a shot, choose just the shot and keep the name you typed. Picking one switches *Version* to its newest version. While the name is empty, *New Version* and *Export*/*Render* are greyed out, and nothing can be written without one.
 - **Frame Range**: *Current Frame*, *Shot Range* (the shot's range; an asset without a range uses the scene's) or *Custom Range*, which shows *Start/End*. Those follow the scene's range until you type your own numbers. What a range means per HDA:
   - *Scheinwerk Publish*: one file per frame; *Current Frame* writes one file without a frame number (`hero_box_v002.abc`). Default: *Shot Range*.
   - *Scheinwerk Publish USD*: always one `.usd`; a range writes the animation into it as time samples. Default: *Current Frame*.
@@ -512,7 +512,7 @@ assets/char/hero/fx/main/cache/look/v002/hero_look_v002.usd            (Scheinwe
 
 Everything else works the same (name, *Frame Range*, *Version* / *New Version*, *Export*, *Info*), except that the name menu lists this task's caches, *Shot* and *Comment* disappear, and nothing is finalized: no `version.json`, and a cached USD layer doesn't touch the layer pointers or the root layer (caches aren't published, spec §4). In a sequence scene it writes into the `_seq` task's cache. Exclude `cache/` from Synology sync (see [Sync](#sync-synology-drive)).
 
-**Load from Disk** (on both HDAs, for publishing and caching): tick it to output the version on disk instead of cooking the input, like Houdini's File Cache. Untick it to work live again.
+**Load from Disk** (on both HDAs, for publishing and caching): tick it to output the version on disk instead of cooking the input, like Houdini's File Cache. Untick it to work live again. On *Publish USD* it also loads the published layers this one sits on, so the stage stays complete: `mtl` comes with the published `geo`, a shot's `lgt` with its `fx`, `anim`, `layout` and the structure. Those are their current published versions, not what is upstream in your scene.
 
 ### Importing
 

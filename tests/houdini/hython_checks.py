@@ -172,7 +172,7 @@ lop = node_with(
         "shot": "",
     }
 )
-assert sw.hda_name_menu(lop) == []  # no USD layers yet
+assert sw.hda_name_menu(lop) == ["geo", "geo (new)", "mtl", "mtl (new)"]  # nothing published: hints
 sw.hda_new_version(lop)
 usd = Path(sw.hda_output(lop))
 assert usd.name == "hero_asset_v001.usd", usd
@@ -182,7 +182,7 @@ usd.write_text("#usda 1.0\n", encoding="utf-8")
 sw.hda_post_render(lop)
 pointer = (hero.path / "publish/_usd/asset/asset.usd").read_text(encoding="utf-8")
 assert "@./v001/hero_asset_v001.usd@" in pointer, pointer
-assert sw.hda_name_menu(lop) == ["asset", "asset"]
+assert sw.hda_name_menu(lop) == [*["geo", "geo (new)", "mtl", "mtl (new)"], "asset", "asset"]
 assert "Current  v001" in sw.hda_info(lop) and "Layer    asset" in sw.hda_info(lop), sw.hda_info(
     lop
 )
@@ -232,7 +232,6 @@ assert sw.hda_range(shot_sop) == (1001, 1010)
 fx = next_usd(project.entity("sq010_0020"), "fx")
 (fx / "sq010_0020_fx_v001.usd").write_text("#usda 1.0\n", encoding="utf-8")
 finalize(fx)
-assert not hasattr(sw, "layers_below")  # Shot Start loads layers (spec §13.2.8)
 
 # _seq: the sequence itself, for sequence-wide products
 assert sw.target_entity("_seq").type == "sequence"
