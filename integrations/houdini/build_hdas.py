@@ -148,6 +148,10 @@ def save_asset(subnet, name: str, label: str, icon: str, parms: list, inputs: tu
     )
     definition = node.type().definition()
     definition.addSection("Tools.shelf", tool_xml(node.type().category().name()))
+    # put down orange as a cloud (sw.style_node): a type's default colour
+    # and shape don't survive saving the HDA, and an OPcustomize could shadow Houdini's
+    definition.addSection("OnCreated", f'{IMPORT}\nsw.style_node(kwargs["node"])\n')
+    definition.setExtraFileOption("OnCreated/IsPython", True)
     group = hou.ParmTemplateGroup(parms)
     definition.setParmTemplateGroup(group)
     definition.setIcon(icon)
@@ -319,15 +323,16 @@ def build_publish_lop() -> None:
 
 
 def build_asset_start() -> None:
-    """The asset skeleton: the Xform /<asset> (the only transformable prim), Scopes
-    /<asset>/geo/{render,proxy} with purposes and /<asset>/mtl (spec §9.3). Prim paths
-    come from the read-only `asset` parm."""
+    """A skeleton at the root prim (SW.asset_start_root): the scene's asset, /<asset>, an
+    Xform with the Scopes geo, geo/render, geo/proxy (purposes render, proxy) and mtl
+    (spec §9.3); or a component /<name> with geo and mtl, render and proxy optional, e.g.
+    to build a part in a shot. Prim paths come from the read-only `root` parm."""
     net = hou.node("/stage").createNode("subnet", "sw_asset_start")
-    root = '/`chs("../asset")`'
+    root = '`chs("../root")`'
     previous = None
     for node_name, paths, prim_type in (
         ("asset", root, "UsdGeomXform"),
-        ("geo", f"{root}/geo {root}/geo/render {root}/geo/proxy", "UsdGeomScope"),
+        ("geo", f"{root}/geo", "UsdGeomScope"),
         ("mtl", f"{root}/mtl", "UsdGeomScope"),
     ):
         prim = net.createNode("primitive", node_name)
@@ -336,6 +341,12 @@ def build_asset_start() -> None:
         if previous is not None:
             prim.setInput(0, previous)
         previous = prim
+    skeleton = previous
+    render_proxy = net.createNode("primitive", "render_proxy")
+    render_proxy.setInput(0, skeleton)
+    render_proxy.parm("primpath").set(f"{root}/geo/render {root}/geo/proxy")
+    render_proxy.parm("primtype").set("UsdGeomScope")
+    previous = render_proxy
     for purpose in ("render", "proxy"):
         configure = net.createNode("configureprimitive", f"{purpose}_purpose")
         configure.setInput(0, previous)
@@ -343,15 +354,60 @@ def build_asset_start() -> None:
         configure.parm("setpurpose").set(1)
         configure.parm("purpose").set(purpose)
         previous = configure
+    # render and proxy: by the toggle (its default follows the mode)
+    with_rp = net.createNode("switch", "with_render_proxy")
+    with_rp.setInput(0, skeleton)
+    with_rp.setInput(1, previous)
+    chs_toggle = 'ch("../renderproxy")'
+    with_rp.parm("input").setExpression(chs_toggle, hou.exprLanguage.Hscript)
+    # a component in a shot gets its kind here; the scene's asset gets it from its
+    # entry layer (<asset>.usd), never from a layer (spec §9.3)
+    kind = net.createNode("configureprimitive", "component_kind")
+    kind.setInput(0, with_rp)
+    kind.parm("primpattern").set(root)
+    kind.parm("setkind").set(1)
+    kind.parm("kind").set("component")
+    mode = net.createNode("switch", "mode")
+    mode.setInput(0, with_rp)
+    mode.setInput(1, kind)
+    mode.parm("input").setExpression('ch("../mode")', hou.exprLanguage.Hscript)
     output = net.node("output0") or net.createNode("output", "output0")
-    output.setInput(0, previous)
+    output.setInput(0, mode)
     output.setDisplayFlag(True)
     net.layoutChildren()
+    mode_menu = hou.MenuParmTemplate(
+        "mode", "Build", menu_items=("asset", "component"),
+        menu_labels=("The scene's asset", "A component (e.g. a part in a shot)"), default_value=0,
+    )  # fmt: skip
+    mode_menu.setScriptCallback(  # render and proxy: on for the asset, off for a component
+        'n = kwargs["node"]; n.parm("renderproxy").set(n.evalParm("mode") == 0)'
+    )
+    mode_menu.setScriptCallbackLanguage(PY)
+    mode_menu.setHelp(
+        "The scene's asset: its skeleton under /<asset>, in asset scenes. A component: "
+        "/<name> with geo and mtl, anywhere, e.g. to build a part like a terrain in a shot."
+    )
     asset = expression("asset", "Asset", f"{SW}.start_asset(hou.pwd())")
     asset.setConditional(hou.parmCondType.DisableWhen, '{ asset == "" } { asset != "" }')
-    asset.setHelp("The scene's asset. Asset Start only works in an asset's scene.")
+    asset.setConditional(hou.parmCondType.HideWhen, "{ mode == component }")
+    asset.setHelp("The scene's asset. This mode only works in an asset's scene.")
+    name = hou.StringParmTemplate("name", "Name", 1, default_value=("",))
+    name.setHelp("The component's root prim, /<name>. Name it like the part it becomes.")
+    name.setConditional(hou.parmCondType.HideWhen, "{ mode == asset }")
+    # on for the scene's asset (the §9.3 skeleton); choosing Build sets it by the mode
+    render_proxy_toggle = hou.ToggleParmTemplate(
+        "renderproxy", "Render and Proxy", default_value=True
+    )
+    render_proxy_toggle.setHelp(
+        "geo/render and geo/proxy, with those purposes. Default: on for the scene's asset, "
+        "off for a component."
+    )
     icon = hou.nodeType(hou.lopNodeTypeCategory(), "primitive").icon()
-    save_asset(net, "sw_asset_start", "Scheinwerk Asset Start", icon, [asset], (0, 0))
+    root_parm = expression("root", "Root Prim", f"{SW}.asset_start_root(hou.pwd())")
+    root_parm.setConditional(hou.parmCondType.DisableWhen, '{ root == "" } { root != "" }')
+    root_parm.setHelp("Where the skeleton is built: /<asset>, or /<name> for a component.")
+    parms = [mode_menu, asset, name, render_proxy_toggle, root_parm]
+    save_asset(net, "sw_asset_start", "Scheinwerk Asset Start", icon, parms, (0, 0))
 
 
 def build_shot_start() -> None:

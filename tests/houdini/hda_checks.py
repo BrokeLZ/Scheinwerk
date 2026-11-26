@@ -348,6 +348,12 @@ for scope in ("/hero/geo", "/hero/geo/render", "/hero/geo/proxy", "/hero/mtl"):
 for purpose in ("render", "proxy"):
     prim = s.GetPrimAtPath(f"/hero/geo/{purpose}")
     assert UsdGeom.Imageable(prim).GetPurposeAttr().Get() == purpose, purpose
+assert start.evalParm("renderproxy") == 1, "on by default for the scene's asset"
+start.parm("renderproxy").set(0)  # an asset without a proxy
+assert not start.stage().GetPrimAtPath("/hero/geo/render")
+assert start.stage().GetPrimAtPath("/hero/geo").GetTypeName() == "Scope"
+start.parm("renderproxy").revertToDefaults()
+assert start.stage().GetPrimAtPath("/hero/geo/proxy")
 body = stage.createNode("sphere")
 body.setInput(0, start)
 body.parm("primpath").set("/hero/geo/render/body")
@@ -691,6 +697,26 @@ except ScheinwerkError as exc:
     assert "cache/rocks" in str(exc), exc
 assert not (shot_usd / "layout/v003").exists()
 
+# --- Asset Start in a shot: a named component to build a part in -------------------------
+comp = stage.createNode("sw_asset_start", exact_type_name=True)
+assert comp.parm("mode").evalAsString() == "asset"  # the default: the scene's asset
+comp.parm("mode").set("component")
+comp.parm("mode").pressButton()  # runs the callback, as choosing from the menu does
+comp.parm("name").set("rock")
+s = comp.stage()
+rock = s.GetPrimAtPath("/rock")
+assert rock.GetTypeName() == "Xform" and Usd.ModelAPI(rock).GetKind() == "component"
+for scope in ("/rock/geo", "/rock/mtl"):
+    assert s.GetPrimAtPath(scope).GetTypeName() == "Scope", scope
+assert comp.evalParm("renderproxy") == 0, "off by default for a component"
+assert not s.GetPrimAtPath("/rock/geo/render"), "render and proxy are optional, off"
+comp.parm("renderproxy").set(1)
+s = comp.stage()
+for purpose in ("render", "proxy"):
+    prim = s.GetPrimAtPath(f"/rock/geo/{purpose}")
+    assert prim.GetTypeName() == "Scope", purpose
+    assert UsdGeom.Imageable(prim).GetPurposeAttr().Get() == purpose, purpose
+
 # --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
 tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}
 for name in (
@@ -703,5 +729,21 @@ for name in (
     "lop_sw_import_lop",
 ):
     assert tools.get(name) == ("Scheinwerk",), (name, tools.get(name))  # fmt: skip
+
+# every Scheinwerk HDA is put down orange (the UI's colour) as a cloud
+sop_net = hou.node("/obj").createNode("geo")
+for category, type_name in (
+    (sop_net, "sw_publish_sop"),
+    (sop_net, "sw_import_sop"),
+    (stage, "sw_publish_lop"),
+    (stage, "sw_asset_start"),
+    (stage, "sw_shot_start"),
+    (stage, "sw_render"),
+    (stage, "sw_import_lop"),
+):
+    node = category.createNode(type_name, exact_type_name=True)
+    rgb = tuple(round(c, 3) for c in node.color().rgb())
+    assert rgb == (1.0, 0.416, 0.0), (type_name, rgb)
+    assert node.userData("nodeshape") == "cloud", (type_name, node.userData("nodeshape"))
 
 print("ALL OK", hou.applicationVersionString())

@@ -982,6 +982,21 @@ def ui_publish_all_usd() -> None:
 # --- Asset Start and Shot Start (spec §13.2.6) ---------------------------------------
 
 
+ASSET_START_COMPONENT = 1  # sw_asset_start's `mode` menu: 0 the scene's asset, 1 component
+
+
+def asset_start_root(node: hou.Node) -> str:
+    """sw_asset_start's root prim: /<the scene's asset>, or in component mode /<name>, a
+    component to build e.g. a part in a shot (spec §13.2.6)."""
+    if node.evalParm("mode") != ASSET_START_COMPONENT:
+        return f"/{start_asset(node)}"
+    name = node.evalParm("name").strip()
+    if not name:
+        raise ScheinwerkError(f"{node.path()}: set the name of the component.")
+    validate_name("product", name)  # it usually becomes a part of the same name
+    return f"/{name}"
+
+
 def start_asset(node: hou.Node) -> str:
     """sw_asset_start: the scene's asset, whose skeleton it builds."""
     project, ctx = _project_and_context()
@@ -1352,6 +1367,21 @@ def import_reload(node: hou.Node) -> None:
         if child.parm("reload"):
             child.parm("reload").pressButton()
     _refresh_info(node)
+
+
+# --- node style ----------------------------------------------------------------------
+
+NODE_COLOR = (1.0, 0.416, 0.0)  # the GUI's orange, #ff6a00 (gui/theme.qss)
+NODE_SHAPE = "cloud"
+
+
+def style_node(node: hou.Node) -> None:
+    """The OnCreated script of every Scheinwerk HDA: orange, a cloud. Never raises."""
+    try:
+        node.setColor(hou.Color(*NODE_COLOR))
+        node.setUserData("nodeshape", NODE_SHAPE)
+    except hou.Error:
+        log.exception("Scheinwerk: couldn't style %s", node.path())
 
 
 # --- adapter (spec §13.1) --------------------------------------------------------------

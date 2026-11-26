@@ -451,7 +451,8 @@ They point at the **highest existing version** (v001 if there is none). For a ne
 
 Two HDAs (Tab: *Scheinwerk Asset Start*, *Scheinwerk Shot Start*) go at the top of a LOP network:
 
-- **Asset Start** (`sw_asset_start`, asset scenes only) builds the asset's skeleton: the Xform `/hero` (the only transformable prim) and the Scopes `/hero/geo`, `/hero/geo/render` and `/hero/geo/proxy` (with the render and proxy purposes) and `/hero/mtl`. Put your geometry under `/hero/geo/render` (and a light stand-in under `proxy`), materials under `/hero/mtl`. The skeleton is published with the first layer, `geo`.
+- **Asset Start** (`sw_asset_start`) builds, in an asset scene, the asset's skeleton: the Xform `/hero` (the only transformable prim) and the Scopes `/hero/geo`, `/hero/geo/render` and `/hero/geo/proxy` (with the render and proxy purposes) and `/hero/mtl`. Untick **Render and Proxy** for an asset without a proxy (just `/hero/geo` and `/hero/mtl`). Put your geometry under `/hero/geo/render` (and a light stand-in under `proxy`), materials under `/hero/mtl`. The skeleton is published with the first layer, `geo`.
+  - Set **Build** to *A component* to use it in any scene, e.g. a shot: it builds `/<Name>` (kind component) with the Scopes `geo` and `mtl`; switching to *A component* turns **Render and Proxy** off, tick it for `geo/render` and `geo/proxy` with their purposes. That's the quick start for a part such as `terrain_main` (below).
 - **Shot Start** (`sw_shot_start`, shot and sequence scenes) loads what other scenes published, behind a Layer Break, so none of it is published again from here: the structure layer (or the sequence's root layer, which ends with it), plus the layers ticked in **Load**. Tick the layers made in *other* scenes: `fx` in the main scene, `layout` and `anim` in an fx scene. *Sequence* (on by default) also loads the sequence's own layers. In a sequence scene, *Shot* picks whose layers to load (`_seq`: the sequence's). **Info** lists what is loaded, strongest first; **Reload** re-reads the files after another scene published. Frame range and fps come from the scene (see above).
 
 A typical project:
@@ -483,7 +484,7 @@ A shot can't leave out the sequence as a whole: the sequence's root layer bundle
 
 ### Publishing with the HDAs
 
-Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render* (all Scheinwerk HDAs are in the Tab menu's **Scheinwerk** submenu):
+Three HDAs do the publishing. They are in the repo (`integrations/houdini/otls/*.hdalc`), so the package loads them; find them with Tab as *Scheinwerk Publish*, *Scheinwerk Publish USD* and *Scheinwerk Render* (all Scheinwerk HDAs are in the Tab menu's **Scheinwerk** submenu and are put down as orange clouds):
 
 | HDA | Network | Writes to |
 | --- | --- | --- |
@@ -548,7 +549,7 @@ Publish USD: layer layout
 
 A part is published like any product (`publish/terrain_main/v003/`), with versions, but it doesn't become a layer of its own. Name the parts freely, as many as you like. The name menu offers the entity's products that already hold USD (or are still empty).
 
-1. **Build the part under one prim of its own**, named like the part: `/terrain_main/mesh` (SOP Create's *Primitive Path*, or a SOP Import) and `/terrain_main/material` (the Material Library's *Material Path Prefix*). That prim is the part's **Root Prim**, `/<name>` by default. The Info box warns about anything outside it, e.g. a Material Library still at `/materials`: a reference to the part would lose it.
+1. **Build the part under one prim of its own**, named like the part (quickest: *Asset Start* with *Build* = *A component*, *Name* `terrain_main`): `/terrain_main/mesh` (SOP Create's *Primitive Path*, or a SOP Import) and `/terrain_main/material` (the Material Library's *Material Path Prefix*). That prim is the part's **Root Prim**, `/<name>` by default. The Info box warns about anything outside it, e.g. a Material Library still at `/materials`: a reference to the part would lose it.
 2. **Publish it** with *Write To* = *Publish (USD product)*, and tick **Load from Disk**: the branch then reads the part back instead of cooking it, the published layers below it (to look at, behind a Layer Break) with the part **referenced** on top. The root prim is the file's default prim, so the file can also be referenced anywhere without a prim path.
 3. **Put it in place with a Graft Branches LOP**: first input the chain (after *Shot Start*), second input the part, *Primitive Path* `/world/env`, source `/terrain_main`. The part lands at `/world/env/terrain_main`, still as a reference, and its material bindings follow it.
 4. **Publish the layer** (`layout`). It writes one **reference** per part into `layout.usd` (`…/terrain_main_v003.usd` at `/terrain_main`, not its contents), so the shot gets the parts through `layout`. The layers below the part aren't written again.
