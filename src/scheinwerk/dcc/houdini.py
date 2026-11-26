@@ -18,6 +18,7 @@ import os
 from pathlib import Path, PurePosixPath
 
 import hou
+from pxr import Sdf, Usd
 
 from scheinwerk.core.context import Context
 from scheinwerk.core.entities import Entity, Task
@@ -25,7 +26,7 @@ from scheinwerk.core.env import cleared_env, env_for
 from scheinwerk.core.errors import NotFound, ScheinwerkError
 from scheinwerk.core.hooks import run_hook
 from scheinwerk.core.project import Project
-from scheinwerk.core.publish import finalize
+from scheinwerk.core.publish import USD_SUFFIXES, finalize
 from scheinwerk.core.templates import format_version, parse_version, validate_name
 from scheinwerk.core.usd_pointer import (
     ASSET_LAYER_ORDER,
@@ -345,7 +346,9 @@ def set_shot(shot: str) -> None:
 # publish HDAs have a `target` menu: publish (products, finalized) or cache (the scene's
 # task cache, <task>/cache/<name>/v###/, never finalized: caches are free-form, spec §4).
 # sw_publish_lop also has product: a USD file published as a product, not as a layer of
-# the entity's stack; a layer that sublayers it carries it into the stack (spec §13.2).
+# the entity's stack. Products and caches are parts: everything they author lives under
+# one root prim, and Load from Disk references them there, so a layer they are merged
+# into writes a reference arc to them (spec §13.2).
 
 TARGET_PUBLISH, TARGET_CACHE, TARGET_PRODUCT = 0, 1, 2  # the publish HDAs' `target` menu
 ASSET_LAYERS = ("geo", "mtl")  # layers with prim conventions (spec §9.3)
@@ -361,6 +364,12 @@ def is_usd_product(node: hou.Node) -> bool:
     return bool(node.parm("layer") and node.parm("target")) and (
         node.evalParm("target") == TARGET_PRODUCT
     )
+
+
+def is_part(node: hou.Node) -> bool:
+    """sw_publish_lop writing a USD product or a task cache: a part under one root prim,
+    loaded back as a reference, to be merged into a layer (spec §13.2)."""
+    return is_usd_product(node) or bool(node.parm("layer") and is_cache(node))
 
 
 RANGE_CURRENT, RANGE_SHOT, RANGE_CUSTOM = 0, 1, 2  # the HDAs' `range` menu
@@ -427,15 +436,55 @@ def hda_output(node: hou.Node) -> str:
 def hda_load_files(node: hou.Node) -> list[Path]:
     """sw_publish_lop's Load from Disk, weakest first (as the Sublayer LOP lists them): the
     published layers below this one (mtl: the geo; a shot layer: the weaker layers and the
-    structure), then the written file. So the stage doesn't lose what came before, and
-    nothing upstream cooks (spec §13.2)."""
-    if is_usd_product(node):
-        return [Path(hda_output(node))]  # a part: merged into the chain, not stacked
+    structure), then for a layer the written file. So the stage doesn't lose what came
+    before, and nothing upstream cooks. A part's file isn't stacked: it is referenced on
+    top, behind a Layer Break, so only the reference reaches a layer it is merged into
+    (spec §13.2)."""
     entity = _node_entity(node)
     if entity.type != "asset":
         write_structure(entity.project.root / "shared" / "usd" / "structure.usd")
-    below = layers_below(entity, node.evalParm("layer"))
-    return [*reversed(below), Path(hda_output(node))]
+    below = list(reversed(layers_below(entity, node.evalParm("layer"))))
+    return below if is_part(node) else [*below, Path(hda_output(node))]
+
+
+def hda_root_default(node: hou.Node) -> str:
+    """Default Root Prim of a part: /<name>, a prim of its own at the top. Build the part
+    under it (/terrain_main/mesh, /terrain_main/material), then put it where it belongs,
+    e.g. with a Graft Branches LOP under /world/env: that keeps the reference."""
+    name = node.evalParm("layer").strip()
+    return f"/{name}" if name else ""
+
+
+def hda_default_prim(node: hou.Node) -> str:
+    """The USD ROP's Default Primitive: a part's root prim when it is at the top (only
+    a root prim can be the default prim), so anything can reference the file without a
+    prim path. Layers: none (the ROP's default)."""
+    try:
+        root = _root_prim(node) if is_part(node) else None
+    except ScheinwerkError:
+        return ""
+    return str(root) if root is not None and root.pathElementCount == 1 else ""
+
+
+def _root_prim(node: hou.Node) -> Sdf.Path:
+    """A part's Root Prim, checked: the reference lands there and takes only what's below."""
+    text = node.evalParm("rootprim").strip()
+    path = Sdf.Path(text) if text and Sdf.Path.IsValidPathString(text) else Sdf.Path()
+    if not (path.IsAbsolutePath() and path.IsPrimPath()) or path == Sdf.Path.absoluteRootPath:
+        raise ScheinwerkError(
+            f"{node.path()}: set Root Prim to the part's prim, e.g. /world/env/terrain."
+        )
+    return path
+
+
+def hda_fps(node: hou.Node) -> float:
+    """fps for the inner Configure Layer: the target entity's. The USD ROP doesn't write the
+    scene's fps by itself (only what the stage's root layer happens to carry), so without
+    this a 25 fps layer could say 24 or nothing (spec §9.2 item 5)."""
+    try:
+        return float(_node_entity(node).fps)
+    except ScheinwerkError:
+        return hou.fps()
 
 
 def hda_load_file(node: hou.Node, index: int) -> str:
@@ -456,7 +505,7 @@ def hda_name_menu(node: hou.Node) -> list[str]:
     if is_cache(node):
         names = [f.name for f in entity.project.scan(_task().cache_dir)]
     elif is_usd_product(node):
-        names = [p.name for p in entity.products(usd=False)]
+        names = [p.name for p in entity.products(usd=False) if _holds_usd(p)]
     elif node.parm("layer"):
         names = [p.name for p in entity.products(usd=True)]
         order = (
@@ -473,6 +522,13 @@ def hda_name_menu(node: hou.Node) -> list[str]:
     else:
         names = [p.name for p in entity.products(usd=False)]
     return [item for name in names for item in (name, name)]
+
+
+def _holds_usd(product: Product) -> bool:
+    """A product a USD product node can publish into: no files yet, or USD in its latest
+    version. Others (abc, bgeo, textures) stay out of the menu; typing their name works."""
+    latest = product.latest()
+    return latest is None or any(f.suffix in USD_SUFFIXES for f in latest.files())
 
 
 def hda_name_changed(node: hou.Node) -> None:
@@ -521,17 +577,29 @@ def _export(node: hou.Node) -> None:
     """Check the node, create its version folder (the USD ROP doesn't make missing
     folders), then press the inner ROP's Render button. Raises ScheinwerkError."""
     product, ext, _ = _hda(node)
-    problem = _fps_problem(node)
+    problem = _fps_problem(node) or _unpublished_problem(node)
     if problem:
         raise ScheinwerkError(problem)
-    # by name first: that loads a locked HDA's contents, children() alone may not
-    rop = node.node("export") or node.node("render")
-    rop = rop or next((c for c in node.children() if c.parm("execute")), None)
+    if is_part(node):
+        _root_prim(node)
+    rop = _rop(node)
     if rop is None:
         raise ScheinwerkError(f"{node.path()} has no ROP inside it.")
     product.file_path(hda_version(node), ext).parent.mkdir(parents=True, exist_ok=True)
-    rop.parm("execute").pressButton()
+    rop.parm("execute").pressButton()  # doesn't raise when the render fails
     _refresh_info(node)
+    errors = rop.errors()
+    if errors:
+        raise ScheinwerkError(
+            f"{node.path()}: the export failed, nothing was finalized: {errors[0]}"
+        )
+
+
+def _rop(node: hou.Node) -> hou.RopNode | None:
+    """The HDA's inner ROP. By name first: that loads a locked HDA's contents, children()
+    alone may not."""
+    rop = node.node("export") or node.node("render")
+    return rop or next((c for c in node.children() if c.parm("execute")), None)
 
 
 def hda_execute(node: hou.Node) -> None:
@@ -635,6 +703,14 @@ def hda_info(node: hou.Node) -> str:
         unordered = _unordered_layer(node)
         if unordered:
             lines.append(f"Warning  {unordered}")
+        if is_part(node):
+            lines.append(f"Root     {_root_prim(node)}  (Load from Disk references it)")
+            stray = _prims_outside_root(node)
+            if stray:
+                lines.append(f"Warning  prims outside {_root_prim(node)}: {', '.join(stray)}")
+        unpublished = _unpublished_problem(node)
+        if unpublished:
+            lines.append(f"Warning  {unpublished}")
     return "\n".join(lines)
 
 
@@ -673,6 +749,79 @@ def _prims_outside_asset(node: hou.Node) -> list[str]:
     return [f"/{n}" for n in names if n not in (entity.name, "HoudiniLayerInfo")]
 
 
+def _written_layers(node: hou.Node) -> list[Sdf.Layer]:
+    """The layers of the incoming stage that the export writes: everything except what a
+    Layer Break drops (Shot Start's layers, a part's layers below)."""
+    inputs = [i for i in node.inputs() if i is not None]
+    stage = inputs[0].stage() if inputs else None
+    if stage is None:
+        return []
+    dropped = set(inputs[0].layersAboveLayerBreak())
+    return [la for la in stage.GetLayerStack(False) if la.identifier not in dropped]
+
+
+def _prims_outside_root(node: hou.Node) -> list[str]:
+    """A part's authored prims that aren't its Root Prim, below it or above it: the
+    reference that loads the part takes only the root, so these would be lost."""
+    if not is_part(node):
+        return []
+    root = _root_prim(node)
+    outside: set[str] = set()
+    for layer in _written_layers(node):
+        if not layer.anonymous:
+            continue
+        stack = list(layer.rootPrims)
+        while stack:
+            prim = stack.pop()
+            path = prim.path
+            if path.name == "HoudiniLayerInfo":
+                continue
+            if root.HasPrefix(path) and path != root:
+                stack.extend(prim.nameChildren)  # an ancestor: look further down
+            elif not path.HasPrefix(root):
+                outside.add(str(path))
+    return sorted(outside)
+
+
+def _unpublished_files(node: hou.Node) -> list[str]:
+    """Files under work/ or cache/ that a published layer or product would point at
+    (spec §9.2 item 6): e.g. a task cache merged in. Root-relative, sorted."""
+    if not node.parm("layer") or is_cache(node):
+        return []
+    found = set()
+    for layer in _written_layers(node):
+        paths = [] if layer.anonymous else [layer.realPath]
+        paths += [layer.ComputeAbsolutePath(a) for a in layer.GetCompositionAssetDependencies()]
+        paths += _houdini_save_paths(layer)
+        for path in paths:
+            ctx = context(Path(path)) if path else None
+            if ctx is not None and ctx.area in ("work", "cache"):
+                found.add(Project.find(ctx.root).rel(Path(path)))
+    return sorted(found)
+
+
+def _houdini_save_paths(layer: Sdf.Layer) -> list[str]:
+    """Files Houdini writes a scene layer's content to when the ROP saves it, e.g. SOP
+    Create with Save Path on (its geometry, its VDBs). Until then the layer is anonymous,
+    and the published file would sublayer the saved one."""
+    info = layer.GetPrimAtPath("/HoudiniLayerInfo") if layer.anonymous else None
+    data = dict(info.customData) if info else {}
+    paths = [data["HoudiniSavePath"]] if data.get("HoudiniSavePath") else []
+    paths += [a.path for a in data.get("HoudiniVolumeFilePaths", ()) if getattr(a, "path", "")]
+    return paths
+
+
+def _unpublished_problem(node: hou.Node) -> str:
+    files = _unpublished_files(node)
+    if not files:
+        return ""
+    return (
+        f"Uses unpublished files (work/ or cache/): {', '.join(files)}. Publish them first "
+        "(a part: Write To Publish (USD product)); a file a LOP saves on its own (e.g. SOP "
+        "Create's Save Path) goes away when you turn that off."
+    )
+
+
 def _refresh_info(node: hou.Node) -> None:
     """Re-evaluate the Info box after files changed on disk (Houdini can't see that)."""
     parm = node.parm("info")
@@ -682,8 +831,14 @@ def _refresh_info(node: hou.Node) -> None:
 
 def hda_post_render(node: hou.Node) -> None:
     """Post-render script of the inner ROP: finalize the version (version.json, and for a
-    USD layer the pointer and root layer). A cache is never finalized."""
+    USD layer the pointer and root layer). A cache is never finalized, nor a version whose
+    render failed: the script runs anyway, and the pointer would name a broken file. The
+    check is here, not only in Export, so a farm render of the ROP (spec §13.2) keeps it."""
     if is_cache(node):
+        return
+    rop = _rop(node)
+    if rop is not None and rop.errors():
+        log.error("Scheinwerk: %s failed, not finalized: %s", node.path(), rop.errors()[0])
         return
     product, ext, _ = _hda(node)
     version = hda_version(node)
@@ -769,9 +924,13 @@ def ui_publish_all_usd() -> None:
     if not plan:
         hou.ui.displayMessage("This scene has no Publish USD nodes.", title="Scheinwerk")
         return
-    lines = [f"{n.path()}   {n.evalParm('layer')} {format_version(v)}" for n, v in plan]
+    lines = [
+        f"{n.path()}   {n.evalParm('layer')} {format_version(v)}"
+        + ("  (USD product)" if is_usd_product(n) else "")
+        for n, v in plan
+    ]
     choice = hou.ui.displayMessage(
-        "Publish these USD layers, in this order?",
+        "Publish these USD layers and products, in this order?",
         buttons=("Publish", "Cancel"),
         default_choice=0,
         close_choice=1,
@@ -780,7 +939,7 @@ def ui_publish_all_usd() -> None:
         title="Scheinwerk",
     )
     if choice == 0:
-        _ui(lambda: len(publish_all_usd(plan)), "Published {} USD layers")
+        _ui(lambda: len(publish_all_usd(plan)), "Published {} USD layers and products")
 
 
 # --- Asset Start and Shot Start (spec §13.2.6) ---------------------------------------
@@ -851,6 +1010,78 @@ def render_root(node: hou.Node) -> str:
     if not path.is_file():
         raise NotFound(f"{entity.name} has no published USD layers yet.")
     return path.as_posix()
+
+
+# The look (engine, samples, motion blur, camera, AOVs) lives on the stage, authored by
+# lighting with Karma Render Settings under /Render; sw_render only points its ROP at it.
+# Everything is a parm expression on the ROP, so a farm (Deadline) can render the saved
+# scene's ROP without the UI (spec §13.2).
+RENDER_ROOT = "/Render"
+DELEGATES = {"cpu": "BRAY_HdKarma", "xpu": "BRAY_HdKarmaXPU"}
+
+
+def _render_stage(node: hou.Node):
+    """The stage sw_render renders (its input, or the published shot). None if it can't
+    cook, e.g. no root layer yet."""
+    source = node.node("source")
+    try:
+        return source.stage() if source is not None else None
+    except hou.Error:
+        return None
+
+
+def _render_prims(node: hou.Node, type_name: str) -> list[str]:
+    stage = _render_stage(node)
+    root = stage.GetPrimAtPath(RENDER_ROOT) if stage is not None else None
+    if root is None or not root.IsValid():
+        return []
+    return [str(p.GetPath()) for p in Usd.PrimRange(root) if p.GetTypeName() == type_name]
+
+
+def _auto_render_settings(node: hou.Node) -> str:
+    """The stage's own settings (renderSettingsPrimPath), else the first RenderSettings prim
+    under /Render. Any prim name works, e.g. Karma Render Settings' /Render/<node name>;
+    the published shot has no such metadata (it is sublayered), so it finds the prim."""
+    stage = _render_stage(node)
+    if stage is None:
+        return ""
+    own = stage.GetMetadata("renderSettingsPrimPath")
+    if own and stage.GetPrimAtPath(own).IsValid():
+        return str(own)
+    found = _render_prims(node, "RenderSettings")
+    return found[0] if found else ""
+
+
+def render_settings_path(node: hou.Node) -> str:
+    """The RenderSettings prim sw_render renders with (for the inner ROP): the node's
+    Render Settings, or when that is empty the automatic one."""
+    return node.evalParm("rendersettings").strip() or _auto_render_settings(node)
+
+
+def render_settings_menu(node: hou.Node) -> list[str]:
+    """sw_render's Render Settings menu: automatic (showing what it finds), then the
+    RenderSettings prims under /Render."""
+    label = f"(automatic: {_auto_render_settings(node) or 'none found'})"
+    paths = _render_prims(node, "RenderSettings")
+    return ["", label, *(i for path in paths for i in (path, path))]
+
+
+def render_pass_menu(node: hou.Node) -> list[str]:
+    """sw_render's Render Pass menu: none, then the RenderPass prims under /Render."""
+    paths = _render_prims(node, "RenderPass")
+    return ["", "(none)", *(i for path in paths for i in (path, path))]
+
+
+def render_delegate(node: hou.Node) -> str:
+    """The inner ROP's renderer: Karma XPU when the chosen settings say engine xpu. husk
+    runs the ROP's delegate and ignores karma:global:engine, so without this, switching
+    Karma Render Settings to XPU would still render on the CPU."""
+    stage = _render_stage(node)
+    path = render_settings_path(node)
+    prim = stage.GetPrimAtPath(path) if stage is not None and path else None
+    attr = prim.GetAttribute("karma:global:engine") if prim and prim.IsValid() else None
+    engine = attr.Get() if attr and attr.HasValue() else "cpu"
+    return DELEGATES.get(str(engine), DELEGATES["cpu"])
 
 
 # --- the importing HDAs: sw_import_sop, sw_import_lop ---------------------------------

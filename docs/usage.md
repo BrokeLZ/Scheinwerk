@@ -429,7 +429,7 @@ This writes `packages/scheinwerk.json` into the preferences of every Houdini ver
   - *Save Next Version*: saves the scene as the task's next version (`hero_mdl_main_v004.hip`), keeping `.hip`/`.hipnc`/`.hiplc`. The scene must already be saved in a task's `work/` folder; for the very first save, use *Save scene as …* in the browser panel.
   - *Open Scheinwerk Browser*: the browser from the [GUI](#gui) chapter in a floating panel. You can also dock it: in any pane, *New Pane Tab Type → Scheinwerk*. Opening a `.hip`, `.hipnc` or `.hiplc` there (double-click or *Open*) loads it into this Houdini, like *File → Open*: Houdini asks to save unsaved changes first. Other files open in their usual application, and *Open with* still starts the application you pick. Right-clicking in the Files column also offers **Save scene as hero_mdl_main_v003.hip** (the selected task's next version): it saves the open scene there and keeps its extension, even if the scene is untitled or belongs to another task.
   - *Copy Context Path*: copies the scene's path relative to the project, e.g. `assets/char/hero/mdl/main/work/hero_mdl_main_v004.hip`.
-  - *Publish All USD*: exports every *Scheinwerk Publish USD* node in the scene, top of the chain first, after showing you the list. A node whose version already has files gets a new version first, so nothing published is overwritten. Use it when a scene publishes several layers (`geo` and `mtl`, or `layout`, `anim` and `lgt`), so none of them is left stale. Bypassed nodes and task caches are skipped.
+  - *Publish All USD*: exports every *Scheinwerk Publish USD* node in the scene, top of the chain first, after showing you the list. A node whose version already has files gets a new version first, so nothing published is overwritten. Use it when a scene publishes several layers (`geo` and `mtl`, or `layout`, `anim` and `lgt`), so none of them is left stale. USD products (parts of a layer) are published too, listed as *(USD product)*. Bypassed nodes and task caches are skipped.
 - **Shortcut.** To put *Save Next Version* on Ctrl+Alt+S: *Edit → Hotkeys…*, search for "Save Next Version", assign the key.
 
 ### Paths in parameters
@@ -500,7 +500,7 @@ All three work the same way:
   - *Scheinwerk Publish*: one file per frame; *Current Frame* writes one file without a frame number (`hero_box_v002.abc`). Default: *Shot Range*.
   - *Scheinwerk Publish USD*: always one `.usd`; a range writes the animation into it as time samples. Default: *Current Frame*.
   - *Scheinwerk Render*: one `.exr` per frame, also for a single frame. Default: *Shot Range*.
-- **Version** starts at 1. **New Version** switches to the next free number; nothing is created yet. **Export** / **Render** creates the version folder and writes into it. When it finishes, the version is finalized: `version.json` gets your *Comment* and the scene as source, and for USD the layer's pointer and the entity's root layer are updated. Exporting again **overwrites the same version** until you press *New Version* again, like Houdini's File Cache.
+- **Version** starts at 1. **New Version** switches to the next free number; nothing is created yet. **Export** / **Render** creates the version folder and writes into it. When it finishes, the version is finalized: `version.json` gets your *Comment* and the scene as source, and for USD the layer's pointer and the entity's root layer are updated. If the export fails, nothing is finalized (no `version.json`, the pointer stays where it was) and you get Houdini's error in a message; *Publish All USD* stops there. Fix the problem and export the same version again. Exporting again **overwrites the same version** until you press *New Version* again, like Houdini's File Cache.
 - **Info** (at the bottom, read-only) shows what is on disk and what the button will do. The USD HDA also shows which version the layer's pointer uses:
 
   ```text
@@ -515,33 +515,50 @@ All three work the same way:
 
   It also warns when something would go wrong: a scene at the wrong fps (*Publish USD* refuses to export then), or, for the asset layers `geo` and `mtl`, prims outside `/<asset>` (e.g. a material library at `/materials`), which a shot referencing the asset would never see, or a shot or sequence layer whose name isn't in `usd_layer_order` (e.g. `light` instead of `lgt`): such a layer sorts below all the listed ones, so it would end up under `layout` in the shot and in *Load from Disk*.
 
-**Publish USD extras.** **Layer Break After** (on by default) passes the stage on through a Layer Break, so a *Publish USD* further down the same chain writes only what was added after this one. That is what lets one scene publish `geo` then `mtl`, or `layout`, `anim` and `lgt`.
+**Publish USD extras.** A USD layer always passes the stage on through a **Layer Break**, so a *Publish USD* further down the same chain writes only what was added after it. That is what lets one scene publish `geo` then `mtl`, or `layout`, `anim` and `lgt`. (Parts work differently, see [below](#building-a-layer-from-cached-parts).)
 
-**Render source.** *Scheinwerk Render*'s **Source** is *Live stage* (the input, for quick iterations) or *Published shot*: it renders the shot's published root layer (`sq010_0010.usd`; in a sequence scene with *Shot* `_seq`, the sequence's), with the render settings at `/Render/rendersettings`. That is exactly what was published, so use it for finals. Either way, the render's `version.json` lists the published USD files it used (`usd_files`): shots always follow the current versions of everything, so this is the record of what a render was made from. To reproduce one, *Set as current* those versions.
+*Publish USD* refuses to publish a layer that points into `work/` or `cache/`, e.g. a task cache you merged in to look at, and the Info box lists those files before you press *Export*. Publish them first (a part: *Publish (USD product)*). A published layer has to work on your other machine, and `cache/` isn't synced.
+
+**Render source.** *Scheinwerk Render*'s **Source** is *Live stage* (the input, for quick iterations) or *Published shot*: it renders the shot's published root layer (`sq010_0010.usd`; in a sequence scene with *Shot* `_seq`, the sequence's), with the render settings published in `lgt`. That is exactly what was published, so use it for finals. Either way, the render's `version.json` lists the published USD files it used (`usd_files`): shots always follow the current versions of everything, so this is the record of what a render was made from. To reproduce one, *Set as current* those versions.
+
+**Render settings.** Everything that changes the look (CPU or XPU, samples, motion blur, camera, resolution, AOVs) is set on a **Karma Render Settings** LOP above the render, and published with the `lgt` layer, so the live and the published render use the same settings. *Scheinwerk Render* only points at them:
+
+- **Render Settings**: which RenderSettings prim to render. Empty (the default) is automatic: the stage's own settings, else the first one under `/Render`, whatever the prim is called (Karma Render Settings names it after the node, e.g. `/Render/karmarendersettings`). The menu shows what automatic finds, then every settings prim under `/Render`, if you have several.
+- **Render Pass**: an optional RenderPass prim; empty means none.
+- **CPU or XPU** follows the *Rendering Engine* on Karma Render Settings: set it to XPU there and the render runs on Karma XPU. There's nothing to switch on the node.
+
 
 **Sequence scenes** (saved under `shots/sq010/_seq/…`) publish to one shot at a time: pick it in the node's *Shot* menu, or set the context option `SW_SHOT` (*Edit → Context Options*, or `sw.set_shot("sq010_0020")`). Without a shot the node shows an error. *Shot Range* then means that shot's range. Pick `_seq` (*the sequence itself*) for things the whole sequence shares, like a lighting rig or a set: they go into the sequence's own `publish/`, and every shot's root layer picks them up as its weakest layer.
 
 ### Building a layer from cached parts
 
-Big layers, like an environment in `layout`, are often built from heavy pieces you don't want to recompute: a terrain, several scatters. Cache each piece as its own USD file and merge them into the layer:
+Big layers, like an environment in `layout`, are often built from heavy pieces you don't want to recompute: a terrain, several scatters. Publish each piece as its own USD file (a *part*) and graft it into the layer:
 
 ```text
-Shot Start ─────────────────────────────────────────────────────────┐
-terrain (SOPs, material) → Publish USD: USD product terrain_base, Load from Disk ─┤
-scatter → Instancer LOP → Publish USD: USD product grass_a, Load from Disk ───────┤
-scatter → Instancer LOP → Publish USD: USD product rocks_b, Load from Disk ───────┤
-                                                                    Merge
-                                                                      │
-                                                   set dressing, cameras, …
-                                                                      │
-                                                     Publish USD: layer layout
+Shot Start
+    │
+Graft Branches (under /world/env) ◄── Publish USD: USD product terrain_main ◄── /terrain_main/mesh
+    │                                  (Load from Disk)                          /terrain_main/material
+Graft Branches (under /world/env) ◄── Publish USD: USD product grass_a ◄─────── /grass_a/…
+    │
+set dressing, cameras, …
+    │
+Publish USD: layer layout
 ```
 
-Set **Write To** to *Publish (USD product)* on each part and give it a name (`terrain_base`, `grass_a`). It is published like any product (`publish/terrain_base/v003/`), with versions, but it doesn't become a layer of its own. With *Load from Disk* on, its branch reads the file instead of cooking. After the Merge, the `layout` publish writes the parts as sublayers of `layout.usd` (paths to the part files, not their contents), so the shot gets them through `layout`. Name the parts freely, as many as you like.
+A part is published like any product (`publish/terrain_main/v003/`), with versions, but it doesn't become a layer of its own. Name the parts freely, as many as you like. The name menu offers the entity's products that already hold USD (or are still empty).
 
+1. **Build the part under one prim of its own**, named like the part: `/terrain_main/mesh` (SOP Create's *Primitive Path*, or a SOP Import) and `/terrain_main/material` (the Material Library's *Material Path Prefix*). That prim is the part's **Root Prim**, `/<name>` by default. The Info box warns about anything outside it, e.g. a Material Library still at `/materials`: a reference to the part would lose it.
+2. **Publish it** with *Write To* = *Publish (USD product)*, and tick **Load from Disk**: the branch then reads the part back instead of cooking it, the published layers below it (to look at, behind a Layer Break) with the part **referenced** on top. The root prim is the file's default prim, so the file can also be referenced anywhere without a prim path.
+3. **Put it in place with a Graft Branches LOP**: first input the chain (after *Shot Start*), second input the part, *Primitive Path* `/world/env`, source `/terrain_main`. The part lands at `/world/env/terrain_main`, still as a reference, and its material bindings follow it.
+4. **Publish the layer** (`layout`). It writes one **reference** per part into `layout.usd` (`…/terrain_main_v003.usd` at `/terrain_main`, not its contents), so the shot gets the parts through `layout`. The layers below the part aren't written again.
+
+Everything goes into **one file** per version: *Publish USD* flattens a SOP Create's layer into it, whatever SOP Create's *Copy Contents* mode. Leave **Save Path** off on SOP Create (and similar options that save a layer to its own file): Houdini would save that geometry into `work/usd/` and the published part would point there. *Publish USD* refuses that and the Info box says which file.
+
+- **Layer Break After** is off for a part, so the layer below can see it. Tick it only if the part is the end of its chain.
 - A new version of a part reaches the shots with the next `layout` publish, which points at that version. *Publish All USD* does both, parts first.
-- What `layout` itself authors after the Merge is stronger than the parts, so it can move or hide something in a part.
-- Layer Break After doesn't apply to a USD product (it is hidden): the layer has to see the part to include it.
+- What `layout` itself authors after the graft is stronger than the parts, so it can move or hide something in a part.
+- To try a part without publishing it, cache it (*Task cache*): it loads back the same way, but `layout` won't publish while it points at a cache.
 
 ### Caching
 
@@ -554,7 +571,7 @@ assets/char/hero/fx/main/cache/look/v002/hero_look_v002.usd            (Scheinwe
 
 Everything else works the same (name, *Frame Range*, *Version* / *New Version*, *Export*, *Info*), except that the name menu lists this task's caches, *Shot* and *Comment* disappear, and nothing is finalized: no `version.json`, and a cached USD layer doesn't touch the layer pointers or the root layer (caches aren't published, spec §4). In a sequence scene it writes into the `_seq` task's cache. Exclude `cache/` from Synology sync (see [Sync](#sync-synology-drive)).
 
-**Load from Disk** (on both HDAs, for publishing and caching): tick it to output the version on disk instead of cooking the input, like Houdini's File Cache. Untick it to work live again. On *Publish USD* it also loads the published layers this one sits on, so the stage stays complete: `mtl` comes with the published `geo`, a shot's `lgt` with its `fx`, `anim`, `layout` and the structure. Those are their current published versions, not what is upstream in your scene.
+**Load from Disk** (on both HDAs, for publishing and caching): tick it to output the version on disk instead of cooking the input, like Houdini's File Cache. Untick it to work live again. On *Publish USD* it also loads the published layers this one sits on, so the stage stays complete: `mtl` comes with the published `geo`, a shot's `lgt` with its `fx`, `anim`, `layout` and the structure. Those are their current published versions, not what is upstream in your scene. A part (a USD product, or a USD task cache) is referenced at its *Root Prim* on top of them instead, behind a Layer Break (see [Building a layer from cached parts](#building-a-layer-from-cached-parts)).
 
 ### Importing
 
@@ -592,10 +609,10 @@ hython integrations/houdini/build_hdas.py sw_publish_sop    # just one
 
 (`hython` is in Houdini's `bin` folder.) It saves `.hdalc` with Indie, `.hdanc` with Apprentice, `.hda` otherwise. **Running it again rebuilds from scratch and replaces hand edits**, so after editing one by hand, either keep doing that or move the change into the script. Inside:
 - *Scheinwerk Publish*: the input → a ROP Geometry Output `export` (set up as described below) and a Switch `load_from_disk` (input 0 = the input, input 1 = a File SOP `load` reading `chs("../output")`, switched by `ch("../load")`) → Null `OUT`.
-- *Scheinwerk Publish USD*: the same with a USD ROP `export` and a Sublayer LOP `load`, then a Switch `layer_break_after` (input 1 = a Layer Break `break`, switched by `ch("../layer_break")`) → `output0`.
+- *Scheinwerk Publish USD*: the input → a Configure Layer `fps` (frames and timecodes per second = `SW.hda_fps(hou.pwd().parent())`) → a USD ROP `export` (*Flatten SOP Layers* on, *Default Primitive* `SW.hda_default_prim(hou.pwd().parent())`). A Switch `load_from_disk` (`ch("../load") * (1 + (ch("../target") != 0))`): input 0 = the input, 1 = a Sublayer LOP `load` (a layer: the layers below and the file), 2 = `load` → a Layer Break `load_break` → a Reference LOP `load_part` (a part: `chs("../output")` at `chs("../rootprim")`, the same prim in the file). Then a Switch `layer_break_after` (input 1 = a Layer Break `break`, switched by `ch("../target") == 0 || ch("../layer_break")`) → `output0`.
 - *Scheinwerk Asset Start*: Primitive LOPs `asset` (Xform), `geo` (three paths) and `mtl` (both Scope), whose paths start with `/`chs("../asset")``, then Configure Primitive LOPs `render_purpose` and `proxy_purpose` → `output0`. The `asset` parm is `SW.start_asset(hou.pwd())`.
 - *Scheinwerk Shot Start*: a Sublayer LOP `load` with 12 file slots, each `SW.shot_start_file(hou.pwd().parent(), N)` and enabled while that isn't empty (slot 1 is the weakest), → a Layer Break → `output0`.
-- *Scheinwerk Render*: the input and a Sublayer LOP `published` (`SW.render_root(hou.pwd().parent())`) → a Switch `source` (`ch("../source")`) → a USD Render ROP `render` (Karma; *Render Settings* `/Render/rendersettings` for the published source). The input also goes straight to `output0`.
+- *Scheinwerk Render*: the input and a Sublayer LOP `published` (`SW.render_root(hou.pwd().parent())`) → a Switch `source` (`ch("../source")`) → a USD Render ROP `render` (*Render Settings* `SW.render_settings_path(hou.pwd().parent())`: the node's, else automatic, *Render Pass* `chs("../renderpass")`, *Render Delegate* `SW.render_delegate(hou.pwd().parent())`: Karma XPU when the settings' engine is `xpu`, else Karma). The input also goes straight to `output0`.
 - *Scheinwerk Import*: a File SOP `load` reading `chs("../path")` → Null `OUT`.
 - *Scheinwerk Import USD*: the input → a Sublayer LOP and a Reference LOP (both `filepath1` = `chs("../path")`, the reference's `primpath1` = `chs("../primpath")`) → a Switch `mode` (`SW.import_mode(hou.pwd().parent())`: 0 sublayer, 1 reference) → `output0`.
 

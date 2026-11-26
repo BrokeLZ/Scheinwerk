@@ -246,34 +246,75 @@ def build_publish_sop() -> None:
 def build_publish_lop() -> None:
     net = hou.node("/stage").createNode("subnet", "sw_publish_lop")
     source = net.indirectInputs()[0]
+    # the USD ROP writes whatever fps the stage's root layer carries, not the scene's:
+    # set the target entity's fps on what is written (spec §9.2 item 5)
+    fps = net.createNode("configurelayer", "fps")
+    fps.setInput(0, source)
+    for toggle, value in (
+        ("setframespersecond", "framespersecond"),
+        ("settimepersecond", "timepersecond"),
+    ):
+        fps.parm(toggle).set(1)
+        fps.parm(value).setExpression(f"{SW}.hda_fps(hou.pwd().parent())", hou.exprLanguage.Python)
     export = net.createNode("usd_rop", "export")
-    export.setInput(0, source)
+    export.setInput(0, fps)
     wire_export(export, "lopoutput")  # Use Relative Paths stays on (the default)
-    load = net.createNode("sublayer", "load")  # the written file on the layers below it
+    # one file per layer or part: a SOP Create's layer (merged or added as a sublayer) is
+    # flattened in, never saved next to it under a node path (obj/.../sopnet/OUT.usd)
+    export.parm("flattensoplayers").set(1)
+    export.parm("defaultprim").setExpression(
+        f"{SW}.hda_default_prim(hou.pwd().parent())", hou.exprLanguage.Python
+    )
+    # Load from Disk. A layer: the written file on the published layers below it. A part
+    # (USD product, task cache): the layers below behind a Layer Break, the file referenced
+    # on top at its root prim, so a layer it is merged into writes only the reference.
+    load = net.createNode("sublayer", "load")
     load_slots(load, "hda_load_file")
+    load_break = net.createNode("layerbreak", "load_break")
+    load_break.setInput(0, load)
+    part = net.createNode("reference::2.0", "load_part")
+    part.setInput(0, load_break)
+    chs(part, "primpath1", "rootprim")
+    chs(part, "filepath1", "output")
+    part.parm("filerefprim1").set("")  # Reference Specific Primitive: the same root prim
+    chs(part, "filerefprimpath1", "rootprim")
     switch = net.createNode("switch", "load_from_disk")
-    switch.setInput(0, source)
-    switch.setInput(1, load)
-    switch.parm("input").setExpression('ch("../load")', hou.exprLanguage.Hscript)
-    # Layer Break After: what comes below writes only what is added after this publish
+    for index, node in enumerate((source, load, part)):
+        switch.setInput(index, node)
+    switch.parm("input").setExpression(
+        'ch("../load") * (1 + (ch("../target") != 0))', hou.exprLanguage.Hscript
+    )
+    # Layer Break After: always for a layer (the shot's root layer stacks it again); an
+    # option for a part, off by default: it is merged into a layer further down
     brk = net.createNode("layerbreak", "break")
     brk.setInput(0, switch)
     after = net.createNode("switch", "layer_break_after")
     after.setInput(0, switch)
     after.setInput(1, brk)
-    # never for a USD product: the layer that merges it in must still write the sublayer
     after.parm("input").setExpression(
-        'ch("../layer_break") && ch("../target") != 2', hou.exprLanguage.Hscript
+        'ch("../target") == 0 || ch("../layer_break")', hou.exprLanguage.Hscript
     )
     output = net.node("output0") or net.createNode("output", "output0")
     output.setInput(0, after)
     output.setDisplayFlag(True)
     net.layoutChildren()
     parms = publish_parms("layer", ext=False, range_default=0, usd=True)
-    layer_break = hou.ToggleParmTemplate("layer_break", "Layer Break After", default_value=True)
-    layer_break.setHelp("Publishes further down this chain write only what is added after it.")
-    layer_break.setConditional(hou.parmCondType.HideWhen, "{ target == product }")
-    parms.insert(parms.index(next(p for p in parms if p.name() == "load")) + 1, layer_break)
+    root = expression("rootprim", "Root Prim", f"{SW}.hda_root_default(hou.pwd())")
+    root.setHelp(
+        "Everything the part authors lives under this prim (default /<name>). Load from "
+        "Disk references it here; place it with Graft Branches (e.g. under /world/env), "
+        "and the layer it is grafted into writes that reference."
+    )
+    root.setConditional(hou.parmCondType.HideWhen, "{ target == publish }")
+    layer_break = hou.ToggleParmTemplate("layer_break", "Layer Break After", default_value=False)
+    layer_break.setHelp(
+        "A layer always breaks. A part usually merges into a layer below, so it doesn't."
+    )
+    layer_break.setConditional(hou.parmCondType.HideWhen, "{ target == publish }")
+    at = parms.index(next(p for p in parms if p.name() == "load")) + 1
+    parms[at:at] = [layer_break]
+    name_at = parms.index(next(p for p in parms if p.name() == "layer")) + 1
+    parms[name_at:name_at] = [root]
     save_asset(net, "sw_publish_lop", "Scheinwerk Publish USD", "LOP_subnet", parms, (1, 1))
 
 
@@ -366,9 +407,16 @@ def build_render() -> None:
     rop = net.createNode("usdrender_rop", "render")
     rop.setInput(0, source)
     wire_export(rop, "outputimage")
-    # the published stack's settings: sublayering drops the lighting layer's default
+    # the look comes from the stage (Karma Render Settings under /Render); the ROP points
+    # at it, by the node's Render Settings or automatically (the published shot is
+    # sublayered, which drops the default settings metadata, so it finds the prim). The
+    # engine picks the delegate: husk ignores the setting.
     rop.parm("rendersettings").setExpression(
-        'ifs(ch("../source") == 1, "/Render/rendersettings", "")', hou.exprLanguage.Hscript
+        f"{SW}.render_settings_path(hou.pwd().parent())", hou.exprLanguage.Python
+    )
+    chs(rop, "renderpass", "renderpass")
+    rop.parm("renderer").setExpression(
+        f"{SW}.render_delegate(hou.pwd().parent())", hou.exprLanguage.Python
     )
     output = net.node("output0") or net.createNode("output", "output0")
     output.setInput(0, source_in)
@@ -383,10 +431,20 @@ def build_render() -> None:
         "source", "Source", menu_items=("live", "published"),
         menu_labels=("Live stage (the input)", "Published shot"), default_value=0,
     )  # fmt: skip
+    settings = menu_string("rendersettings", "Render Settings", "render_settings_menu")
+    settings.setHelp(
+        "The RenderSettings prim (Karma Render Settings LOP): engine, samples, "
+        "motion blur, camera, AOVs. XPU or CPU follows its engine. Empty: automatic, the "
+        "stage's own settings, else the first under /Render."
+    )
+    render_pass = menu_string("renderpass", "Render Pass", "render_pass_menu")
+    render_pass.setHelp("Optional RenderPass prim. Empty: none.")
     empty = '{ render_name == "" }'
     parms = [
         menu_string("render_name", "Render Name", "hda_name_menu", callback="hda_name_changed"),
         source_menu,
+        settings,
+        render_pass,
         *versioning("render_name", ext=False, range_default=1),
         shot,
         hou.StringParmTemplate("comment", "Comment", 1, default_value=("",)),

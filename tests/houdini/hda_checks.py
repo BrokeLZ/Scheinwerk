@@ -9,6 +9,8 @@ import hou
 from pxr import Sdf, Usd, UsdGeom
 
 import scheinwerk.dcc.houdini as sw
+from scheinwerk.core.errors import ScheinwerkError
+from scheinwerk.core.fileio import read_json, write_json
 from scheinwerk.core.project import Project
 
 tmp = Path(sys.argv[1])
@@ -122,6 +124,17 @@ layer = Usd.Stage.Open(str(usd / "asset/v002/hero_asset_v002.usd"))
 assert (layer.GetStartTimeCode(), layer.GetEndTimeCode()) == (1001, 1003)
 assert "@./v002/hero_asset_v002.usd@" in (usd / "asset/asset.usd").read_text(encoding="utf-8")
 
+# a failed export finalizes nothing (no version.json, the pointer stays) and says so
+(usd / "asset/v003/hero_asset_v003.usd").mkdir(parents=True)  # the ROP can't write there
+try:
+    sw.publish_all_usd([(lop, 3)])
+    raise AssertionError("a failed export must raise")
+except ScheinwerkError as exc:
+    assert "failed" in str(exc) and "nothing was finalized" in str(exc), exc
+assert not (usd / "asset/v003/version.json").exists()
+assert "@./v002/hero_asset_v002.usd@" in (usd / "asset/asset.usd").read_text(encoding="utf-8")
+lop.parm("version").set(2)
+
 # --- sw_render: Karma, one .exr per frame
 cam = stage.createNode("camera")
 cam.setInput(0, stage.createNode("sphere"))
@@ -130,6 +143,24 @@ settings = stage.createNode("karmarenderproperties")
 settings.setInput(0, cam)
 render = create(stage, "sw_render", settings)
 assert render.evalParm("render_name") == "" and render.parm("range").evalAsString() == "shot"
+# render settings and pass come from the stage; the ROP points at them
+rop = render.node("render")
+assert render.evalParm("rendersettings") == ""  # automatic: the stage's own settings
+assert "/Render/rendersettings" in render.parm("rendersettings").menuItems()
+assert rop.evalParm("rendersettings") == "/Render/rendersettings"
+named = stage.createNode("karmarenderproperties")  # any prim name, e.g. the node's
+named.setInput(0, cam)
+named.parm("primpath").set("/Render/karmarendersettings")
+render.setInput(0, named)
+assert rop.evalParm("rendersettings") == "/Render/karmarendersettings"
+render.setInput(0, settings)
+assert render.parm("renderpass").menuItems()[0] == "" and rop.evalParm("renderpass") == ""
+# the engine follows the settings prim: the ROP's delegate decides what husk runs
+assert rop.evalParm("renderer") == "BRAY_HdKarma"
+settings.parm("engine").set("xpu")
+assert rop.evalParm("renderer") == "BRAY_HdKarmaXPU", rop.evalParm("renderer")
+settings.parm("engine").set("cpu")
+assert rop.evalParm("renderer") == "BRAY_HdKarma"
 render.parm("execute").pressButton()  # no name: nothing happens
 assert not (hero.path / "media").exists()
 render.parm("render_name").set("beauty")
@@ -168,9 +199,16 @@ lop_cache.parm("execute").pressButton()
 assert names(cache_dir / "look/v001") == ["hero_look_v001.usd"]
 assert not (usd / "look").exists()
 assert "look" not in (usd / "payload.usd").read_text(encoding="utf-8")
+assert lop_cache.evalParm("rootprim") == "/look"  # a part: a prim of its own, /<name>
+assert "prims outside /look: /sphere1" in lop_cache.evalParm("info"), lop_cache.evalParm("info")
+lop_cache.parm("rootprim").set("/sphere1")
+assert "outside" not in lop_cache.evalParm("info"), lop_cache.evalParm("info")
 lop_cache.parm("load").set(1)
-assert lop_cache.node("load_from_disk").evalParm("input") == 1
-assert lop_cache.stage().GetPrimAtPath("/sphere1"), "the cached layer is loaded back"
+assert lop_cache.node("load_from_disk").evalParm("input") == 2  # referenced, not stacked
+ref = lop_cache.stage().GetPrimAtPath("/sphere1")
+assert ref.GetTypeName() == "Sphere", "the cache is loaded back"
+arcs = [a for s in ref.GetPrimStack() for a in s.referenceList.GetAddedOrExplicitItems()]
+assert arcs and arcs[0].primPath == "/sphere1", arcs
 
 # Load from Disk also reads a published version back
 lop.parm("load").set(1)
@@ -254,7 +292,8 @@ assert il.evalParm("path").endswith("_usd/asset/asset.usd")  # current = the poi
 assert il.stage().GetPrimAtPath("/sphere1")
 il.parm("version").set("v001")
 assert il.evalParm("path").endswith("asset/v001/hero_asset_v001.usd")
-assert il.parm("version").menuItems()[:3] == ("current", "v002", "v001")
+# v003 is the failed export from above: there, but never finalized or made current
+assert il.parm("version").menuItems()[:4] == ("current", "v003", "v002", "v001")
 assert "Layer    asset  current v002" in il.evalParm("info"), il.evalParm("info")
 
 # --- a sequence scene publishes to the shot picked in the Shot menu
@@ -314,7 +353,8 @@ body.setInput(0, start)
 body.parm("primpath").set("/hero/geo/render/body")
 pub_geo = create(stage, "sw_publish_lop", body)
 pub_geo.parm("layer").set("geo")  # geo/v001 exists from above: Publish All makes v002
-assert pub_geo.evalParm("layer_break") == 1 and "Warning" not in pub_geo.evalParm("info")
+assert pub_geo.node("layer_break_after").evalParm("input") == 1, "a layer always breaks"
+assert "Warning" not in pub_geo.evalParm("info")
 look = stage.createNode("primitive")
 look.setInput(0, pub_geo)
 look.parm("primpath").set("/hero/mtl/red")
@@ -447,41 +487,139 @@ for rel in (
     assert rel in used, used
 assert not any(u.endswith(("fx.usd", "sq010_0010.usd", "hero.usd", "payload.usd")) for u in used)
 
-# --- parts: USD products, cached on their own, merged into a layer --------------------
+# --- parts: USD products, published on their own, referenced into a layer -------------
+# at 25 fps (the shot's entity.json override): every layer written must carry it
+write_json(shot.path / "entity.json", {**read_json(shot.path / "entity.json"), "fps": 25})
+sw.set_fps(25)
+# the part is built under a prim of its own, /terrain_base/{mesh,material}
 terrain = stage.createNode("cube")
-terrain.parm("primpath").set("/world/env/terrain_base")
-part = create(stage, "sw_publish_lop", terrain)
+terrain.setInput(0, main_start)  # built on Shot Start, like any part
+terrain.parm("primpath").set("/terrain_base/mesh")
+material = stage.createNode("primitive")
+material.setInput(0, terrain)
+material.parm("primpath").set("/terrain_base/material")
+material.parm("primtype").set("UsdGeomScope")
+part = create(stage, "sw_publish_lop", material)
 part.parm("target").set("product")
 part.parm("layer").set("terrain_base")
-assert part.node("layer_break_after").evalParm("input") == 0, "a part is never broken off"
-assert part.evalParm("info").startswith("Product  terrain_base"), part.evalParm("info")
+assert part.evalParm("rootprim") == "/terrain_base"  # default: a prim of its own
+assert part.evalParm("layer_break") == 0, "a part merges into a layer: no break by default"
+assert part.node("layer_break_after").evalParm("input") == 0
+info = part.evalParm("info")
+assert info.startswith("Product  terrain_base") and "Warning" not in info, info
+stray = stage.createNode("cube")
+stray.setInput(0, material)
+stray.parm("primpath").set("/world/props/stray")
+part.setInput(0, stray)
+assert "prims outside /terrain_base: /world" in part.evalParm("info"), part.evalParm("info")
+part.setInput(0, material)
 part.parm("execute").pressButton()
 part_dir = shot.path / "publish/terrain_base/v001"
-assert names(part_dir) == ["sq010_0010_terrain_base_v001.usd", "version.json"]
+part_file = part_dir / "sq010_0010_terrain_base_v001.usd"
+assert names(part_dir) == [part_file.name, "version.json"]
+part_layer = Sdf.Layer.FindOrOpen(str(part_file))
+assert (part_layer.framesPerSecond, part_layer.timeCodesPerSecond) == (25, 25)
+assert part_layer.defaultPrim == "terrain_base"  # referenced without a prim path too
+assert [str(x.path) for x in part_layer.rootPrims if x.name != "HoudiniLayerInfo"] == [
+    "/terrain_base"
+], "only the part: Shot Start's layers stay out"
 assert not (shot_usd / "terrain_base").exists()  # no pointer, not in the root layer
 assert "terrain_base" not in (shot_usd / "sq010_0010.usd").read_text(encoding="utf-8")
-items = part.parm("layer").menuItems()  # the shot's products, not its layers or hints
+(shot.path / "publish/plate_ref/v001").mkdir(parents=True)  # a non-USD product
+(shot.path / "publish/plate_ref/v001/sq010_0010_plate_ref_v001.abc").write_bytes(b"")
+items = part.parm("layer").menuItems()  # the shot's USD products, not layers or hints
 assert "terrain_base" in items and "layout" not in items and "lgt" not in items, items
-part.parm("load").set(1)  # just the file: this branch is merged, not stacked
-files = [Path(x.realPath).name for x in part.stage().GetLayerStack() if x.realPath]
-assert files == ["sq010_0010_terrain_base_v001.usd"], files
-merge = stage.createNode("merge")
-merge.setInput(0, main_start)
-merge.setInput(1, part)
-pub_layout2 = create(stage, "sw_publish_lop", merge)
+assert "plate_ref" not in items, items
+# Load from Disk: the layers below behind a break, the part referenced on top
+part.parm("load").set(1)
+assert part.node("load_from_disk").evalParm("input") == 2
+loaded = part.stage()
+assert loaded.GetPrimAtPath("/terrain_base/mesh").GetTypeName() == "Cube"
+assert loaded.GetPrimAtPath("/world/chars"), "the layers below are there to look at"
+part.parm("layer_break").set(1)
+assert part.node("layer_break_after").evalParm("input") == 1
+part.parm("layer_break").set(0)
+# grafted under /world/env into the layout: one reference arc, nothing below, the fps
+graft = stage.createNode("graftbranches")
+graft.setInput(0, main_start)
+graft.setInput(1, part)
+graft.parm("primpath").set("/world/env")
+graft.parm("srcprimpath1").set("/terrain_base")
+pub_layout2 = create(stage, "sw_publish_lop", graft)
 pub_layout2.parm("layer").set("layout")
+assert "Warning" not in pub_layout2.evalParm("info"), pub_layout2.evalParm("info")
 pub_layout2.parm("new_version").pressButton()
 pub_layout2.parm("execute").pressButton()
 layout2 = Sdf.Layer.FindOrOpen(str(shot_usd / "layout/v002/sq010_0010_layout_v002.usd"))
+assert list(layout2.subLayerPaths) == [], list(layout2.subLayerPaths)
+spec = layout2.GetPrimAtPath("/world/env/terrain_base")
+arcs = [(a.assetPath, str(a.primPath)) for a in spec.referenceList.GetAddedOrExplicitItems()]
 expected = "../../../terrain_base/v001/sq010_0010_terrain_base_v001.usd"
-assert list(layout2.subLayerPaths) == [expected], list(layout2.subLayerPaths)
-assert not layout2.GetPrimAtPath("/world/env/terrain_base"), "referenced, not copied"
+assert arcs == [(expected, "/terrain_base")], arcs
+assert not layout2.GetPrimAtPath("/world/env/terrain_base/mesh"), "referenced, not copied"
 assert not layout2.GetPrimAtPath("/world/fx"), "Shot Start's layers stay out"
+assert (layout2.framesPerSecond, layout2.timeCodesPerSecond) == (25, 25)
 pointer = shot_usd / "layout/layout.usd"
 assert "./v002/" in pointer.read_text(encoding="utf-8")
 Sdf.Layer.FindOrOpen(str(pointer)).Reload()  # this session opened it at v001 above
 shot_stage = Usd.Stage.Open(str(shot_usd / "sq010_0010.usd"))
-assert shot_stage.GetPrimAtPath("/world/env/terrain_base").GetTypeName() == "Cube"
+assert shot_stage.GetPrimAtPath("/world/env/terrain_base/mesh").GetTypeName() == "Cube"
+assert shot_stage.GetPrimAtPath("/world/env/terrain_base/material")
+
+# SOP Create with Save Path into work/: the part would sublayer that file, so it refuses
+soil = stage.createNode("sopcreate", "soil")
+soil.node("sopnet/create").createNode("box").setDisplayFlag(True)
+soil.parm("enable_savepath").set(1)
+soil.parm("savepath").set((shot.path / "lgt/main/work/usd/soil.usd").as_posix())
+soil_part = create(stage, "sw_publish_lop", soil)
+soil_part.parm("target").set("product")
+soil_part.parm("layer").set("soil")
+info = soil_part.evalParm("info")
+assert "unpublished" in info and "lgt/main/work/usd/soil.usd" in info, info
+try:
+    sw.publish_all_usd([(soil_part, 1)])
+    raise AssertionError("a part that sublayers a work/ file must not publish")
+except ScheinwerkError as exc:
+    assert "work/usd/soil.usd" in str(exc), exc
+assert not (shot.path / "publish/soil").exists()
+# without Save Path, in any SOP Create mode: one file, the SOP layer flattened into it
+soil.parm("enable_savepath").set(0)
+for number, mode in enumerate(("merge", "off", "on"), start=1):
+    soil.parm("copycontents").set(mode)  # merge / add as sublayer / copy into new layer
+    soil_part.parm("version").set(number)
+    sw.publish_all_usd([(soil_part, number)])
+    folder = shot.path / f"publish/soil/v{number:03d}"
+    main = f"sq010_0010_soil_v{number:03d}.usd"
+    assert sorted(str(f.relative_to(folder)) for f in folder.rglob("*") if f.is_file()) == [
+        main,
+        "version.json",
+    ], (mode, list(folder.rglob("*")))
+    soil_layer = Sdf.Layer.FindOrOpen(str(folder / main))
+    assert not list(soil_layer.subLayerPaths) and soil_layer.GetPrimAtPath("/soil"), mode
+
+# a task cache can be merged in to look at, but a published layer refuses it (spec §9.2)
+rocks = stage.createNode("sphere")
+rocks.parm("primpath").set("/rocks/geo")
+cached = create(stage, "sw_publish_lop", rocks)
+cached.parm("target").set("cache")
+cached.parm("layer").set("rocks")
+assert cached.evalParm("rootprim") == "/rocks"
+cached.parm("execute").pressButton()
+cached.parm("load").set(1)
+merge2 = stage.createNode("merge")
+merge2.setInput(0, main_start)
+merge2.setInput(1, cached)
+bad = create(stage, "sw_publish_lop", merge2)
+bad.parm("layer").set("layout")
+bad.parm("version").set(3)
+info = bad.evalParm("info")
+assert "unpublished" in info and "lgt/main/cache/rocks" in info, info
+try:
+    sw.publish_all_usd([(bad, 3)])
+    raise AssertionError("a layer referencing a task cache must not publish")
+except ScheinwerkError as exc:
+    assert "cache/rocks" in str(exc), exc
+assert not (shot_usd / "layout/v003").exists()
 
 # --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
 tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}
