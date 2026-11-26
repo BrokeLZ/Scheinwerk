@@ -555,6 +555,8 @@ A part is published like any product (`publish/terrain_main/v003/`), with versio
 
 Everything goes into **one file** per version: *Publish USD* flattens a SOP Create's layer into it, whatever SOP Create's *Copy Contents* mode. Leave **Save Path** off on SOP Create (and similar options that save a layer to its own file): Houdini would save that geometry into `work/usd/` and the published part would point there. *Publish USD* refuses that and the Info box says which file.
 
+**Scatters of an asset's variants** (e.g. `grass_a`): use **Explore Variants** in its *Duplicate Variants* mode to get one prototype per variant. Its *Explore Variants* mode references its input stage, which only exists in your scene, so the published part would need a second file; *Publish USD* refuses that and the Info box names the prim (e.g. `/grass_a/Prototypes/proto_vars`). With *Duplicate Variants* the prototypes are copies that each reference the asset's published `hero.usd`, so a new asset version still reaches the scatter.
+
 - **Layer Break After** is off for a part, so the layer below can see it. Tick it only if the part is the end of its chain.
 - A new version of a part reaches the shots with the next `layout` publish, which points at that version. *Publish All USD* does both, parts first.
 - What `layout` itself authors after the graft is stronger than the parts, so it can move or hide something in a part.

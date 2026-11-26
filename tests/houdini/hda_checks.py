@@ -597,6 +597,76 @@ for number, mode in enumerate(("merge", "off", "on"), start=1):
     soil_layer = Sdf.Layer.FindOrOpen(str(folder / main))
     assert not list(soil_layer.subLayerPaths) and soil_layer.GetPrimAtPath("/soil"), mode
 
+# a scatter of an asset's variants: Explore Variants (in its Explore Variants mode)
+# references its input stage, which only exists in this scene. Refused before anything
+# is written; Duplicate Variants copies them instead, and the part is one file.
+variants_asset = tmp / "plant.usda"
+variants_asset.write_text(
+    """#usda 1.0
+(
+    defaultPrim = "plant"
+)
+
+def Xform "plant" (
+    variants = {
+        string model = "a"
+    }
+    prepend variantSets = "model"
+)
+{
+    variantSet "model" = {
+        "a" {
+            def Cube "geo"
+            {
+            }
+
+        }
+        "b" {
+            def Sphere "geo"
+            {
+            }
+
+        }
+    }
+}
+""",
+    encoding="utf-8",
+)
+plant = stage.createNode("reference::2.0")
+plant.parm("primpath1").set("/plant")
+plant.parm("filepath1").set(variants_asset.as_posix())
+explore = stage.createNode("explorevariants")
+explore.setInput(0, plant)
+explore.parm("primpattern").set("/plant")
+explore.parm("mode").set("1")  # Explore Variants
+spot = stage.createNode("cube")
+spot.parm("primpath").set("/grass/spot")
+scatter = stage.createNode("instancer")
+scatter.setInput(0, spot)
+scatter.setInput(1, explore)
+scatter.parm("primpath").set("/grass/instances")
+scatter.parm("transformsourcemode").set("prims")
+scatter.parm("locationpattern").set("/grass/spot")
+scatter.parm("protosourcemode").set("second")
+scatter.parm("protopattern").set("/Variants")
+grass = create(stage, "sw_publish_lop", scatter)
+grass.parm("target").set("product")
+grass.parm("layer").set("grass")
+info = grass.evalParm("info")
+assert "only exists in this scene" in info and "/grass/instances" in info, info
+try:
+    sw.publish_all_usd([(grass, 1)])
+    raise AssertionError("a part referencing an in-memory layer must not publish")
+except ScheinwerkError as exc:
+    assert "only exists in this scene" in str(exc), exc
+assert not (shot.path / "publish/grass").exists(), "refused before anything is written"
+explore.parm("mode").set("0")  # Duplicate Variants: copies, each one referencing the file
+explore.parm("primpath").set("/__variants")
+scatter.parm("protopattern").set("/__variants/*/*")
+assert "Warning" not in grass.evalParm("info"), grass.evalParm("info")
+sw.publish_all_usd([(grass, 1)])
+assert names(shot.path / "publish/grass/v001") == ["sq010_0010_grass_v001.usd", "version.json"]
+
 # a task cache can be merged in to look at, but a published layer refuses it (spec §9.2)
 rocks = stage.createNode("sphere")
 rocks.parm("primpath").set("/rocks/geo")

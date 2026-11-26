@@ -577,7 +577,7 @@ def _export(node: hou.Node) -> None:
     """Check the node, create its version folder (the USD ROP doesn't make missing
     folders), then press the inner ROP's Render button. Raises ScheinwerkError."""
     product, ext, _ = _hda(node)
-    problem = _fps_problem(node) or _unpublished_problem(node)
+    problem = _fps_problem(node) or _unpublished_problem(node) or _in_memory_problem(node)
     if problem:
         raise ScheinwerkError(problem)
     if is_part(node):
@@ -708,9 +708,9 @@ def hda_info(node: hou.Node) -> str:
             stray = _prims_outside_root(node)
             if stray:
                 lines.append(f"Warning  prims outside {_root_prim(node)}: {', '.join(stray)}")
-        unpublished = _unpublished_problem(node)
-        if unpublished:
-            lines.append(f"Warning  {unpublished}")
+        for problem in (_unpublished_problem(node), _in_memory_problem(node)):
+            if problem:
+                lines.append(f"Warning  {problem}")
     return "\n".join(lines)
 
 
@@ -809,6 +809,43 @@ def _houdini_save_paths(layer: Sdf.Layer) -> list[str]:
     paths = [data["HoudiniSavePath"]] if data.get("HoudiniSavePath") else []
     paths += [a.path for a in data.get("HoudiniVolumeFilePaths", ()) if getattr(a, "path", "")]
     return paths
+
+
+def _in_memory_references(node: hou.Node) -> list[str]:
+    """Prims of the written layers that reference or payload a layer that only exists in
+    this scene, e.g. Explore Variants in its Explore Variants mode references its input
+    stage (an Instancer copies that reference into its prototypes). The ROP would save it
+    as a second file under a node path, or fail."""
+    if not node.parm("layer"):
+        return []
+    found = []
+    for layer in _written_layers(node):
+        if not layer.anonymous:
+            continue
+        paths: list[Sdf.Path] = []
+        layer.Traverse(Sdf.Path.absoluteRootPath, paths.append)
+        for path in paths:
+            spec = layer.GetPrimAtPath(path) if path.IsPrimPath() else None
+            if spec is None:
+                continue
+            arcs = [
+                *spec.referenceList.GetAddedOrExplicitItems(),
+                *spec.payloadList.GetAddedOrExplicitItems(),
+            ]
+            if any(a.assetPath.startswith("anon:") for a in arcs):
+                found.append(str(path))
+    return sorted(set(found))
+
+
+def _in_memory_problem(node: hou.Node) -> str:
+    prims = _in_memory_references(node)
+    if not prims:
+        return ""
+    return (
+        f"{', '.join(prims)} references a layer that only exists in this scene: it would "
+        "be saved as a second file. E.g. Explore Variants in its Explore Variants mode "
+        "references its input; use Duplicate Variants, which copies them."
+    )
 
 
 def _unpublished_problem(node: hou.Node) -> str:
