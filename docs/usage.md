@@ -138,13 +138,15 @@ All functions raise `scheinwerk.core.errors.ScheinwerkError` (or a subclass) wit
 
 ## Workfile templates
 
-"New empty workfile" copies `shared/templates/empty.<ext>` from the project. Scheinwerk can't make a valid empty `.hip` or `.blend` on its own, so save one from each DCC once:
+"New empty workfile" copies `shared/templates/empty.<ext>` from the project. A new project (`sw init`, *New project…*) starts with Scheinwerk's defaults, copied from `src/scheinwerk/resources/templates/`:
 
-| DCC | Save an empty scene as |
-| --- | --- |
-| Houdini | `shared/templates/empty.hip` (or `empty.hipnc`) |
-| Nuke | `shared/templates/empty.nk` |
-| Blender | `shared/templates/empty.blend` |
+| DCC | Template | Notes |
+| --- | --- | --- |
+| Houdini | `empty.hiplc` | an empty scene saved by Houdini 21 Indie |
+| Nuke | `empty.nk` | a minimal script |
+| Blender | `empty.blend` | not shipped yet: save an empty scene from Blender |
+
+They are the project's own copies: replace one (save your own start scene over it, e.g. with your usual nodes or a 25 fps setup) or add more (`empty.hip`, `empty.hipnc`, …), and only that project changes. Creating a project never overwrites a template that is already there. A project made before this has none: copy the files from `src/scheinwerk/resources/templates/` into its `shared/templates/`. To change the defaults for future projects, change the files in `src/scheinwerk/resources/templates/`.
 
 Without a template for an extension you get an error telling you which file to create.
 

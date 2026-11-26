@@ -6,3 +6,8 @@
 *.hdalc binary
 *.hdanc binary
 *.otl binary
+# DCC scenes (workfile templates)
+*.hip binary
+*.hiplc binary
+*.hipnc binary
+*.blend binary

@@ -29,6 +29,7 @@ src/scheinwerk/core/   stdlib only: templates, project, context, entities, versi
 src/scheinwerk/cli.py  argparse `sw` command
 src/scheinwerk/gui/    PySide6 widgets, actions, theme.qss
 src/scheinwerk/dcc/    adapters (houdini, nuke, blender)
+src/scheinwerk/resources/templates/   default empty workfiles copied into new projects
 integrations/          files the DCCs load at startup (Houdini package, Nuke init/menu, Blender extension)
 tests/                 pytest, real projects in tmp_path
 docs/spec.md           the contract

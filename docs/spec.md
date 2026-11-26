@@ -1,6 +1,6 @@
 # Scheinwerk — Specification
 
-Status: v1 spec · Last updated: 2026-11-24
+Status: v1 spec · Last updated: 2026-11-26
 This file is the single source of truth for Scheinwerk. Code serves the spec. If a decision changes, change this file in the same commit.
 
 ---
@@ -98,7 +98,7 @@ No database or server. No multi-user handling, locking or permissions. No task s
 │           └── media/<name>/v###/
 ├── shared/                               # project-wide: HDAs, templates, hooks, LUTs
 │   ├── hooks/
-│   ├── templates/                        # optional empty workfile templates: empty.<ext>
+│   ├── templates/                        # empty workfile templates: empty.<ext> (§4.3)
 │   └── usd/
 │       └── structure.usd                 # the shot hierarchy (§9.2), written by core
 └── io/                                   # in/ and out/: plates, references, deliveries
@@ -113,6 +113,10 @@ No database or server. No multi-user handling, locking or permissions. No task s
 ### 4.2 Ignored files
 
 Scans skip entries that match `scheinwerk.json → ignore`. Defaults: `backup`, `*.blend1`, `*.autosave`, `.DS_Store`, `._*`, `Thumbs.db`, `@eaDir`, `*~`. Synology conflict copies (names containing `_Conflict` / `Conflict`) are not ignored. `sw doctor` reports them.
+
+### 4.3 Workfile templates
+
+`shared/templates/empty.<ext>` are the empty scenes *New empty workfile* copies (§10 `Task.new_empty_workfile`). Scheinwerk ships defaults in `src/scheinwerk/resources/templates/` (`empty.hiplc`, saved by Houdini 21 Indie; `empty.nk`, a minimal Nuke script; any `empty.<ext>` added there later ships too). `Project.create` copies each one that isn't in the new project's `shared/templates/` yet; it never overwrites. After that they belong to the project: edit, replace or add templates there. Existing projects don't get them automatically: copy them by hand.
 
 ---
 
@@ -576,7 +580,8 @@ copy_new(src, dest)                         # never overwrites (AlreadyExists)
 find_root(path) -> Path | None
 read_config(root) -> dict
 Project.find(path) -> Project | None
-Project.create(folder, name, **settings) -> Project   # writes scheinwerk.json + assets/ shots/ shared/{hooks,templates}/ shared/usd/structure.usd io/{in,out}/;
+Project.create(folder, name, **settings) -> Project   # writes scheinwerk.json + assets/ shots/ shared/{hooks,templates}/ shared/usd/structure.usd io/{in,out}/,
+                                                      # copies the default templates (DEFAULT_TEMPLATES, §4.3) that are missing;
                                                       # refuses an existing or nested project and unknown settings
 project.root -> Path
 project.config -> dict                      # parsed scheinwerk.json

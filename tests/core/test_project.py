@@ -14,7 +14,7 @@ from scheinwerk.core.errors import (
     NotInProject,
     ScheinwerkError,
 )
-from scheinwerk.core.project import DEFAULTS, Project
+from scheinwerk.core.project import DEFAULT_TEMPLATES, DEFAULTS, Project
 from scheinwerk.core.usd_pointer import STRUCTURE
 from tests.conftest import touch
 
@@ -47,6 +47,25 @@ def test_create_in_existing_folder_keeps_files(tmp_path: Path) -> None:
     keep = touch(tmp_path / "show/notes.txt", b"mine")
     Project.create(tmp_path / "show", "show")
     assert keep.read_bytes() == b"mine"
+
+
+def test_default_templates_ship_with_scheinwerk() -> None:
+    names = sorted(p.name for p in DEFAULT_TEMPLATES.iterdir())
+    assert {"empty.hiplc", "empty.nk"} <= set(names), names
+    assert all(n.startswith("empty.") for n in names), names
+
+
+def test_create_copies_default_templates(tmp_path: Path) -> None:
+    p = Project.create(tmp_path / "show", "show")
+    for src in DEFAULT_TEMPLATES.iterdir():
+        assert (p.root / "shared/templates" / src.name).read_bytes() == src.read_bytes()
+
+
+def test_create_keeps_existing_templates(tmp_path: Path) -> None:
+    mine = touch(tmp_path / "show/shared/templates/empty.hiplc", b"MINE")
+    p = Project.create(tmp_path / "show", "show")
+    assert mine.read_bytes() == b"MINE"  # never overwritten
+    assert (p.root / "shared/templates/empty.nk").is_file()  # the missing ones still come
 
 
 def test_create_refuses_existing_project(project: Path) -> None:

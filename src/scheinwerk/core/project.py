@@ -18,7 +18,7 @@ from scheinwerk.core.errors import (
     NotInProject,
     ScheinwerkError,
 )
-from scheinwerk.core.fileio import check_free, exists_ci, read_json, write_json
+from scheinwerk.core.fileio import check_free, copy_new, exists_ci, read_json, write_json
 from scheinwerk.core.hooks import post_create
 from scheinwerk.core.templates import shot_sequence, validate_name
 from scheinwerk.core.usd_pointer import write_structure
@@ -56,6 +56,9 @@ DEFAULTS: dict = {
 DEFAULT_CATEGORIES = ("char", "prop", "env")
 
 # Folders Project.create makes next to scheinwerk.json.
+# Empty workfile templates shipped with Scheinwerk, copied into new projects (spec §4.3).
+DEFAULT_TEMPLATES = Path(__file__).resolve().parent.parent / "resources" / "templates"
+
 LAYOUT = ("assets", "shots", "shared/hooks", "shared/templates", "shared/usd", "io/in", "io/out")
 
 # Folder contents that mark an asset (as opposed to a category), besides a template department.
@@ -112,6 +115,10 @@ class Project:
         for sub in LAYOUT:
             (folder / sub).mkdir(parents=True, exist_ok=True)
         write_structure(folder / "shared" / "usd" / "structure.usd")
+        for src in sorted(DEFAULT_TEMPLATES.glob("empty.*")):
+            dest = folder / "shared" / "templates" / src.name
+            if not dest.exists():  # a template already there stays the project's own
+                copy_new(src, dest)
         write_json(folder / MARKER, config)
         return cls(folder, config)
 
