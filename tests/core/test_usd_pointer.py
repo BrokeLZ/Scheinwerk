@@ -220,14 +220,15 @@ def test_layers_below_a_shot_layer_end_with_the_structure(proj: Project) -> None
     shot = proj.create_shot("sq010_0010")
     usd = shot.path / "publish/_usd"
     structure = proj.root / "shared/usd/structure.usd"
-    published(shot, "lgt", "anim", "layout")
-    # usd_layer_order: lgt, fx, anim, layout; fx is not published
+    published(shot, "lgt", "anim", "cam", "layout")
+    # usd_layer_order: lgt, fx, anim, cam, layout; fx is not published
     assert layers_below(shot, "lgt") == [
         usd / "anim/anim.usd",
+        usd / "cam/cam.usd",
         usd / "layout/layout.usd",
         structure,
     ]
-    assert layers_below(shot, "fx") == [usd / "anim/anim.usd", usd / "layout/layout.usd", structure]
+    assert layers_below(shot, "cam") == [usd / "layout/layout.usd", structure]
     assert layers_below(shot, "layout") == [structure]
     assert layers_below(shot, "extra") == [structure]  # not in the order: after it
 

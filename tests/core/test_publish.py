@@ -180,8 +180,8 @@ def test_asset_layer_order(hero: Entity) -> None:
 
 
 def test_shot_root_layer(proj: Project, shot: Entity) -> None:
-    # usd_layer_order = lgt, fx, anim, layout; others after it A-Z; structure last.
-    for layer in ["layout", "zzz", "lgt", "cfx", "fx"]:
+    # usd_layer_order = lgt, fx, anim, cam, layout; others after it A-Z; structure last.
+    for layer in ["layout", "zzz", "lgt", "cfx", "cam", "fx"]:
         finalize(publish_layer(shot, layer))
     usd = shot.path / "publish/_usd"
     assert text(usd / "sq010_0010.usd") == (
@@ -191,6 +191,7 @@ def test_shot_root_layer(proj: Project, shot: Entity) -> None:
         "    subLayers = [\n"
         "        @./lgt/lgt.usd@,\n"
         "        @./fx/fx.usd@,\n"
+        "        @./cam/cam.usd@,\n"
         "        @./layout/layout.usd@,\n"
         "        @./cfx/cfx.usd@,\n"
         "        @./zzz/zzz.usd@,\n"

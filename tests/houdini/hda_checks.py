@@ -402,7 +402,7 @@ hou.hipFile.clear(suppress_save_prompt=True)
 hou.hipFile.save((shot.path / "fx/main/work/sq010_0010_fx_main_v001.hip").as_posix())
 stage = hou.node("/stage")
 fx_start = stage.createNode("sw_shot_start", exact_type_name=True)
-assert fx_start.evalParm("load") == "sequence"
+assert fx_start.evalParm("load") == "cam sequence"  # the shot camera, once published
 loaded = fx_start.evalParm("info").splitlines()
 assert loaded == [
     "Frames: 1001-1002",
@@ -762,6 +762,28 @@ fx = Sdf.Layer.FindOrOpen(
     str(project.root / "shots/sq010/sq010_0030/publish/_usd/fx/v001/sq010_0030_fx_v001.usd")
 )
 assert fx.GetPrimAtPath("/world/fx/sq010_0030") and not fx.GetPrimAtPath("/world/fx/sq010_0010")
+
+# --- the shot camera: its own layer, cam, which every Shot Start loads by default
+shotcam = stage.createNode("camera")
+shotcam.setInput(0, pub)  # after the fx publish and its Layer Break
+shotcam.parm("primpath").set("/world/cameras/shotcam")
+pub_cam = create(stage, "sw_publish_lop", shotcam)
+pub_cam.parm("shot").set("sq010_0030")
+assert "cam" in pub_cam.parm("layer").menuItems(), "a standard shot layer"
+pub_cam.parm("layer").set("cam")
+assert "usd_layer_order" not in pub_cam.evalParm("info")
+pub_cam.parm("execute").pressButton()
+cam_layer = Sdf.Layer.FindOrOpen(
+    str(project.root / "shots/sq010/sq010_0030/publish/_usd/cam/v001/sq010_0030_cam_v001.usd")
+)
+assert cam_layer.GetPrimAtPath("/world/cameras/shotcam")
+assert not cam_layer.GetPrimAtPath("/world/fx/sq010_0030"), "only what's below the break"
+other = stage.createNode("sw_shot_start", exact_type_name=True)
+other.parm("shot").set("sq010_0030")
+assert other.stage().GetPrimAtPath("/world/cameras/shotcam"), "loaded without ticking"
+assert "shots/sq010/sq010_0030/publish/_usd/cam/cam.usd" in other.evalParm("info")
+root = (project.root / "shots/sq010/sq010_0030/publish/_usd/sq010_0030.usd").read_text("utf-8")
+assert root.index("./fx/") < root.index("./cam/"), root
 
 # --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
 tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}

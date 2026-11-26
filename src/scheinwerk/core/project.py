@@ -47,7 +47,7 @@ DEFAULTS: dict = {
             "comp": ["main"],
         },
     },
-    "usd_layer_order": ["lgt", "fx", "anim", "layout"],
+    "usd_layer_order": ["lgt", "fx", "anim", "cam", "layout"],
     "ignore": ["backup", "*.blend1", "*.autosave", ".DS_Store", "._*", "Thumbs.db", "@eaDir", "*~"],
     "templates": {},
 }

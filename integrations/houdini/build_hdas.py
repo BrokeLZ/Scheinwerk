@@ -441,11 +441,14 @@ def build_shot_start() -> None:
         item_generator_script_language=PY, menu_type=hou.menuType.Normal,
     )  # fmt: skip
     load = hou.StringParmTemplate(
-        "load", "Load", 1, default_value=("sequence",),
+        "load", "Load", 1, default_value=("cam sequence",),
         item_generator_script=f'{IMPORT}\nreturn sw.shot_start_layer_menu(kwargs["node"])',
         item_generator_script_language=PY, menu_type=hou.menuType.StringToggle,
     )  # fmt: skip
-    load.setHelp("The layers published from other scenes, e.g. fx in the main scene.")
+    load.setHelp(
+        "The layers published from other scenes, e.g. fx in the main scene. "
+        "cam (the shot camera) is ticked by default."
+    )
     reload = hou.ButtonParmTemplate("reload", "Reload")
     reload.setScriptCallback('hou.pwd().node("load").parm("reload").pressButton()')
     reload.setScriptCallbackLanguage(PY)
