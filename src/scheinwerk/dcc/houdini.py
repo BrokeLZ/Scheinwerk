@@ -1040,14 +1040,33 @@ def shot_start_file(node: hou.Node, index: int) -> str:
     return files[index - 1].as_posix() if index <= len(files) else ""
 
 
+def shot_start_frames(node: hou.Node) -> tuple[int, int] | None:
+    """The target's frames (a sequence: the span of its shots), which sw_shot_start sets as
+    the stage's time range: with Houdini's Stage Frame Range Drives Playbar, each shot
+    branch of a _seq scene brings its own range. None: no range is set."""
+    try:
+        return target_entity(node.evalParm("shot") or None).frames
+    except ScheinwerkError:
+        return None
+
+
+def shot_start_frame(node: hou.Node, index: int) -> int:
+    """For the Configure Layer: start (0) or end (1), 0 when there is no range."""
+    frames = shot_start_frames(node)
+    return frames[index] if frames else 0
+
+
 def shot_start_info(node: hou.Node) -> str:
-    """Info box: the loaded layers, strongest first. Never raises."""
+    """Info box: the frame range, then the loaded layers, strongest first. Never raises."""
     try:
         files = shot_start_files(node)
         project = target_entity(node.evalParm("shot") or None).project
     except ScheinwerkError as exc:
         return str(exc)
-    return "\n".join(["Loaded (strongest first):", *(project.rel(f) for f in reversed(files))])
+    frames = shot_start_frames(node)
+    lines = [f"Frames: {frames[0]}-{frames[1]}" if frames else "Frames: none set"]
+    lines += ["Loaded (strongest first):", *(project.rel(f) for f in reversed(files))]
+    return "\n".join(lines)
 
 
 # --- sw_render's source (spec §13.2.6) ------------------------------------------------

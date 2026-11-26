@@ -404,7 +404,11 @@ stage = hou.node("/stage")
 fx_start = stage.createNode("sw_shot_start", exact_type_name=True)
 assert fx_start.evalParm("load") == "sequence"
 loaded = fx_start.evalParm("info").splitlines()
-assert loaded == ["Loaded (strongest first):", "shared/usd/structure.usd"], loaded
+assert loaded == [
+    "Frames: 1001-1002",
+    "Loaded (strongest first):",
+    "shared/usd/structure.usd",
+], loaded
 for prim, kind in (
     ("/world/chars", "group"),
     ("/world/cameras", "group"),
@@ -716,6 +720,48 @@ for purpose in ("render", "proxy"):
     prim = s.GetPrimAtPath(f"/rock/geo/{purpose}")
     assert prim.GetTypeName() == "Scope", purpose
     assert UsdGeom.Imageable(prim).GetPurposeAttr().Get() == purpose, purpose
+
+# --- Shot Start sets the shot's frame range on the stage (drives the playbar with
+# Houdini's Stage Frame Range Drives Playbar), one range per shot branch of a _seq scene
+project.create_shot("sq010_0030", frames=(1101, 1150))
+project.create_shot("sq010_0040")  # no frames
+hou.hipFile.clear(suppress_save_prompt=True)
+hou.hipFile.save(
+    (project.root / "shots/sq010/_seq/lgt/main/work/sq010_lgt_main_v002.hip").as_posix()
+)
+stage = hou.node("/stage")
+branches = {}
+for name in ("sq010_0010", "sq010_0030", "sq010_0040", "_seq"):
+    start = stage.createNode("sw_shot_start", exact_type_name=True)
+    start.parm("shot").set(name)
+    edit = stage.createNode("sphere")
+    edit.setInput(0, start)
+    edit.parm("primpath").set(f"/world/fx/{name.strip('_')}")
+    branches[name] = edit
+s = branches["sq010_0010"].stage()
+assert (s.GetStartTimeCode(), s.GetEndTimeCode()) == (1001, 1002), "the shot's frames"
+s = branches["sq010_0030"].stage()
+assert (s.GetStartTimeCode(), s.GetEndTimeCode()) == (1101, 1150), "its own branch, own range"
+assert "Frames: 1101-1150" in branches["sq010_0030"].input(0).evalParm("info")
+s = branches["sq010_0040"].stage()
+assert not s.GetRootLayer().HasStartTimeCode(), "a shot without frames sets none"
+assert "Frames: none set" in branches["sq010_0040"].input(0).evalParm("info")
+s = branches["_seq"].stage()
+assert (s.GetStartTimeCode(), s.GetEndTimeCode()) == (1001, 1150), "the sequence: all shots"
+pick = stage.createNode("switch")
+pick.setInput(0, branches["sq010_0010"])
+pick.setInput(1, branches["sq010_0030"])
+pick.parm("input").set(1)
+assert pick.stage().GetStartTimeCode() == 1101, "a Switch passes the chosen shot's range"
+# the range sits behind the Layer Break: a publish writes only its own render range
+pub = create(stage, "sw_publish_lop", branches["sq010_0030"])
+pub.parm("shot").set("sq010_0030")
+pub.parm("layer").set("fx")
+pub.parm("execute").pressButton()
+fx = Sdf.Layer.FindOrOpen(
+    str(project.root / "shots/sq010/sq010_0030/publish/_usd/fx/v001/sq010_0030_fx_v001.usd")
+)
+assert fx.GetPrimAtPath("/world/fx/sq010_0030") and not fx.GetPrimAtPath("/world/fx/sq010_0010")
 
 # --- TAB menu: every HDA under Scheinwerk, not Digital Assets --------------------------
 tools = {t.name(): t.toolMenuLocations() for t in hou.shelves.tools().values()}

@@ -412,12 +412,25 @@ def build_asset_start() -> None:
 
 def build_shot_start() -> None:
     """Loads the structure layer (or the sequence root layer) and the ticked published
-    layers behind a Layer Break, so none of it is published again (spec §13.2.6)."""
+    layers, and sets the target's frame range, behind a Layer Break, so none of it is
+    published again (spec §13.2.6)."""
     net = hou.node("/stage").createNode("subnet", "sw_shot_start")
     sublayer = net.createNode("sublayer", "load")
     load_slots(sublayer, "shot_start_file")
+    frames = net.createNode("configurelayer", "frame_range")
+    frames.setInput(0, sublayer)
+    for index, (toggle, value) in enumerate(
+        (("setstarttime", "starttime"), ("setendtime", "endtime"))
+    ):
+        frames.parm(toggle).setExpression(
+            f"{SW}.shot_start_frames(hou.pwd().parent()) is not None", hou.exprLanguage.Python
+        )
+        frames.parm(value).deleteAllKeyframes()  # its default is $FSTART / $FEND
+        frames.parm(value).setExpression(
+            f"{SW}.shot_start_frame(hou.pwd().parent(), {index})", hou.exprLanguage.Python
+        )
     brk = net.createNode("layerbreak", "break")
-    brk.setInput(0, sublayer)
+    brk.setInput(0, frames)
     output = net.node("output0") or net.createNode("output", "output0")
     output.setInput(0, brk)
     output.setDisplayFlag(True)
