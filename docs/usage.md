@@ -373,7 +373,7 @@ texture_set  Brick  warning
 not used  photo.webp  (unsupported image format)
 ```
 
-Files, folders (each folder is looked at on its own, also its subfolders) and zips all work. A folder of 20 downloaded sets gives 20 entries; Megascans `Var1/`, `Var2/` folders become variants `var01`, `var02`. A Quixel Bridge download folder is one entry: its `Thumbs/` copies and `previews/` are skipped. Roles, normal-map convention (GL/DX), packed `arm`/`orm` maps, colour spaces and the spec/gloss workflow are read from the file names; the rules are in [spec §17.5](spec.md#175-normalization-texture-processor).
+Files, folders (each folder is looked at on its own, also its subfolders) and zips all work. A folder of 20 downloaded sets gives 20 entries; Megascans `Var1/`, `Var2/` folders become variants `var01`, `var02`. A Quixel Bridge download folder is one entry: its `Thumbs/` copies and `previews/` are skipped, and its `.json` gives the entry its real name, size and displacement height. Roles, normal-map convention (GL/DX), packed `arm`/`orm` maps, colour spaces and the spec/gloss workflow are read from the file names; the rules are in [spec §17.5](spec.md#175-normalization-texture-processor).
 
 Then ingest:
 

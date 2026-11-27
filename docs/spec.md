@@ -1128,6 +1128,7 @@ The texture processor is a project-free core module, shared by the library and, 
   - **Leftovers.** Images without a role (except HDRIs), other files (`.mtlx`, `.txt`, `.json`, previews) in a folder with exactly one set or role-named map are that entry's *skipped* files; otherwise they are listed as *not used*, like models (until step L4), images `hoiiotool` can't read (webp, jxl, heif, jp2, avif, gif) and files that can't be read. Ingesting into an existing item, as a new version or one new or changed variant, is chosen per entry (`--item`, `--variant`).
   - **Duplicates:** an entry whose files have the `sha256` of originals already in the library gets status *warning*, naming the item and version.
 - **Display names** are suggested from the base name, without resolution, format and variant tokens, each lowercase word capitalised (`Rusty_Metal_02_4K` → `Rusty Metal 02`, `Metal032_4K-JPG` → `Metal032`).
+- **Metadata files.** A Quixel Bridge `<id>.json` (an object with `id`, `name` and a `meta` list) next to an entry's maps gives that entry its display name, its `size_m` (from `scanArea`, e.g. `2x2 m`, textures and texture sets only) and, when the entry has a `height` map, its `displacement` (`height_m` from `height`, `mid` 0.5); the entry says which file it used. It belongs to the entry whose base name is its `id`, or to the only entry of its folder. Its tags and categories are not taken: they follow the library's own. Other JSON files are ignored; further formats are added here when needed.
 
 ### 17.6 Models and promotion
 

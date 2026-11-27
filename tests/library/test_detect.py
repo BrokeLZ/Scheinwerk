@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
 
@@ -292,6 +293,49 @@ def test_quixel_surface_subfolders_belong_to_the_set(tmp_path: Path) -> None:
     }
     assert all(Path(f["path"]).parent == root for f in entry["variants"]["main"])
     assert len(entry["skipped"]) == 2 + 12 + 1  # json + preview, Thumbs, previews/
+
+
+def quixel_json(path: Path, id_: str, name: str, **meta: str) -> None:
+    entries = [{"key": k, "name": k, "value": v} for k, v in meta.items()]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"id": id_, "name": name, "meta": entries, "tags": ["x"]}))
+
+
+def test_quixel_json_gives_name_size_and_displacement(tmp_path: Path) -> None:
+    root = tmp_path / "rock_jagged_vclgff3lw"
+    files(root, *(f"vclgff3lw_4K_{m}" for m in ("Albedo.jpg", "Normal.jpg", "Displacement.exr")))
+    meta = {"scanArea": "2x1.5 m", "height": "0.062 m"}
+    quixel_json(root / "vclgff3lw.json", "vclgff3lw", "Icelandic  Rough Rock", **meta)
+    [entry] = run([root]).entries
+    assert entry["name"] == "Icelandic Rough Rock"
+    assert entry["size_m"] == [2.0, 1.5]
+    assert entry["displacement"] == {"mid": 0.5, "height_m": 0.062}
+    assert entry["tags"] == [] and entry["categories"] == []  # Quixel's tags are not taken
+    assert any("vclgff3lw.json" in m for m in entry["messages"])
+
+
+def test_quixel_json_without_height_map_or_size(tmp_path: Path) -> None:
+    # atlas folders and ids differ (qieuu2 vs qieuu_); no height map -> no displacement
+    root = tmp_path / "tree_needle_qieuu2"
+    files(root, "qieuu_4K_Albedo.jpg", "qieuu_4K_Opacity.jpg")
+    quixel_json(root / "qieuu2.json", "qieuu2", "Juniper", height="0.005 m")
+    [entry] = run([root]).entries
+    assert (entry["name"], entry["size_m"], entry["displacement"]) == ("Juniper", None, None)
+
+
+def test_quixel_json_matched_by_id_among_several_sets(tmp_path: Path) -> None:
+    files(tmp_path / "f", "aaa_Color.png", "aaa_Normal.png", "bbb_Color.png", "bbb_Normal.png")
+    quixel_json(tmp_path / "f" / "bbb.json", "bbb", "Second Set")
+    assert sorted(e["name"] for e in run([tmp_path / "f"]).entries) == ["Aaa", "Second Set"]
+
+
+def test_other_json_files_are_ignored(tmp_path: Path) -> None:
+    files(tmp_path / "f", "w_Color.png", "w_Normal.png")
+    (tmp_path / "f" / "info.json").write_text('{"name": 3}')
+    (tmp_path / "f" / "broken.json").write_text("{nope")
+    [entry] = run([tmp_path / "f"]).entries
+    assert entry["name"] == "W" and entry["messages"] == ["The normal map's name says neither " \
+        "GL nor DX: assumed OpenGL. Set flip_green if it is DirectX."]  # fmt: skip
 
 
 def test_quixel_single_map_surface(tmp_path: Path) -> None:

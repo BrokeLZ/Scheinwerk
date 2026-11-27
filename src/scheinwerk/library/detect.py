@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import re
 import zipfile
 from collections.abc import Callable
@@ -325,6 +326,48 @@ def _single(group: list[Map], srgb: str, linear: str) -> dict:
     return entry
 
 
+_METRES = re.compile(r"\s*([0-9.]+)\s*m?\s*")
+_AREA = re.compile(r"\s*([0-9.]+)\s*x\s*([0-9.]+)\s*m?\s*")
+
+
+def _quixel(path: Path) -> dict | None:
+    """A Quixel Bridge `<id>.json`: its id, display name, scan area and displacement height."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("meta"), list):
+        return None
+    if not (isinstance(data.get("id"), str) and isinstance(data.get("name"), str)):
+        return None
+    meta = {m.get("key"): m.get("value") for m in data["meta"] if isinstance(m, dict)}
+    area = _AREA.fullmatch(str(meta.get("scanArea") or ""))
+    height = _METRES.fullmatch(str(meta.get("height") or ""))
+    try:
+        size = [float(area[1]), float(area[2])] if area else None
+        height_m = float(height[1]) if height else None
+    except ValueError:
+        size = height_m = None
+    return {
+        "file": path,
+        "id": data["id"].lower(),
+        "name": " ".join(data["name"].split()),
+        "size_m": size if size and min(size) > 0 else None,
+        "height_m": height_m if height_m and height_m > 0 else None,
+    }
+
+
+def _use_metadata(entry: dict, info: dict) -> None:
+    """Fill an entry from a metadata file found next to its maps (spec §17.5 Metadata)."""
+    entry["name"] = info["name"] or entry["name"]
+    if entry["type"] in ("texture", "texture_set"):
+        entry["size_m"] = info["size_m"]
+        has_height = any(f["role"] == "height" for fs in entry["variants"].values() for f in fs)
+        if has_height and info["height_m"]:
+            entry["displacement"] = {"mid": 0.5, "height_m": info["height_m"]}
+    entry["messages"].append(f"Name and size from {info['file'].name} (Quixel).")
+
+
 def _batch(
     files: list[tuple[Path, str | None]],
     probe: Callable[[Path], ImageInfo],
@@ -370,6 +413,13 @@ def _batch(
             leftovers += [m.path for m in g]  # previews and such, dropped with the maps
         else:
             entries.append(_single(g, srgb, linear))
+    sidecars = [q for p in others if p.suffix.lower() == ".json" and (q := _quixel(p))]
+    for group, entry in zip([*sets, *named], owners, strict=True):
+        match = [q for q in sidecars if q["id"] == group[0].name.base]
+        if not match and len(owners) == 1 and len(sidecars) == 1:
+            match = sidecars  # Quixel atlases: folder and json `qieuu2`, maps `qieuu_…`
+        if len(match) == 1:
+            _use_metadata(entry, match[0])
     if len(owners) == 1:
         owners[0]["skipped"] += [str(p) for p in leftovers]
     else:
