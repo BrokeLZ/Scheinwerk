@@ -14,6 +14,7 @@ are in the spec.
 | `s06_triplanar.py` | hython | MaterialX image and triplanar nodes in Karma, normal maps under triplanar |
 | `s07_model_import.py` | hython | Headless fbx / gltf / glb / obj / abc → USD |
 | `s08_preview.py` | hython | Preview scene as USDA text, framing, husk renders, JPEG thumbnails |
+| `s09_render_space.py` | Python 3.11 | How Karma reads colour textures in the rendering space in use: untagged float maps, `colorSpace` tags. Also writes `scene.usda` to compare in Houdini's Karma viewport with your own colour settings |
 
 Results go to `spike/l0/out/<os>/` (ignored by git): one `<script>.md` per script, the rendered
 images, and `REPORT.md` with everything together.

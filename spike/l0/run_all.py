@@ -26,6 +26,7 @@ SCRIPTS = [  # (script, needs hython)
     ("s06_triplanar.py", True),
     ("s07_model_import.py", True),
     ("s08_preview.py", True),
+    ("s09_render_space.py", False),
 ]
 
 

@@ -3,7 +3,39 @@
 Windows: pending (`run_all.py` → `out/windows/REPORT.md`).
 First Windows note (Houdini 21.0.596, from the test suite, not `run_all.py`): with `OCIO` unset,
 `hoiiotool` uses `ocio://default`, which names the sRGB texture space `sRGB Encoded Rec.709 (sRGB)`
-(now accepted by `core/textures.py`). Everything below is from macOS
+(now accepted by `core/textures.py`).
+Windows `s01` and `s02` (2026-11-27, Houdini 21.0.596, Karma XPU on the GPU): same results as
+macOS, including the expected FAILs (half `.tx` is float, `<UDIM>` crashes, XPU ignores file
+MIPs under an orthographic camera). husk honours `colorSpace` on the image node's `inputs:file`
+in CPU and XPU, and also when that input is connected to a tagged Material or NodeGraph
+interface input (checked by hand: an 8-bit sRGB `.tx` tagged `raw` there renders raw, untagged
+it is decoded as sRGB). `s03`–`s08` are still to run.
+
+`s09` (Windows, 2026-11-27): colour textures under three OCIO configs: Houdini's shipped one
+(`scene_linear` = Linear Rec.709), the user's copy (`scene_linear` = ACEScg plus an added file
+rule `tx` → `Linear Rec.709 (sRGB)`), and that copy without the `tx` rule.
+
+- Karma shades in the config's `scene_linear` (a texture squared in the shader gives the
+  ACEScg result under the user's config). husk writes the image converted to Linear Rec.709
+  (`oiio:ColorSpace = lin_rec709`) under every config.
+- `colorSpace` tags on `inputs:file` are honoured in CPU and XPU, so tagged half `.exr` maps
+  (ACEScg or Linear Rec.709) are correct under all three configs. `raw` and `ND_image_vector3`
+  keep data untouched under all three.
+- Untagged maps follow the config's file rules (by name, then by extension): an untagged ACEScg
+  `.exr` is read as Linear Rec.709 by the `exr` rule in every config.
+- The added `tx` rule breaks 8-bit sRGB `.tx` maps: untagged ones are read as linear, and on
+  **XPU** a `sRGB - Texture` tag (or an `*srgb_tx*` file name) on a `.tx` is overridden by it.
+  CPU honours the tag. Without that rule every tagged patch is correct on both engines.
+- **Houdini authoring trap** (user's hip, a MtlX Image in a Karma Material Builder inside a
+  Material Library LOP): the MtlX Image's *File Color Space* is written to USD as `colorSpace`
+  only on the Material Library's first cook. Changing it afterwards (also with `cook(force=True)`
+  or another shader parm changed) leaves the old tag in the stage, so renders don't change.
+  Set before the first cook (fresh load), `Raw`, `srgb_texture` and `ACEScg` each render
+  differently in husk, CPU and XPU alike. So: check the tag in the Scene Graph Details, not the
+  parm. For L5, `sw_texture_set` must not rely on editing that parm interactively; library USD
+  written by core carries its tags from the start and is not affected.
+
+Everything below is from macOS
 (Apple Silicon, Karma XPU on the CPU device). Each item: what was found, then the text proposed
 for the spec. The proposals below are now in `docs/spec.md` §17.
 
