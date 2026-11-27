@@ -6,7 +6,7 @@ Scheinwerk is a lightweight, file-based VFX pipeline for one artist (macOS + Win
 
 ## Current phase
 
-> Phase 5 — Asset library, step L1: library core (see spec §17.12). L0 (spike) is done on macOS; its Windows run is still open (`spike/l0/`). Phases 1 (Core), 2 (CLI) and 3 (GUI) are done; Phase 4 (Houdini) is parked (spec §16). Update this line when a step or phase is done.
+> Phase 5 — Asset library, step L2: texture processor (see spec §17.12). L1 (library core) is done; L0 (spike) is done on macOS, its Windows run is still open (`spike/l0/`). Phases 1 (Core), 2 (CLI) and 3 (GUI) are done; Phase 4 (Houdini) is parked (spec §16). Update this line when a step or phase is done.
 
 Work on one phase at a time. Don't build ahead (no GUI code during the core phase, no Houdini code during the GUI phase).
 
@@ -25,7 +25,7 @@ uv run scheinwerk-gui        # GUI
 ## Layout
 
 ```text
-src/scheinwerk/core/   stdlib only: templates, project, context, entities, versions, publish, env, hooks, usd_pointer, fileio, doctor, settings, system, install, errors
+src/scheinwerk/core/   stdlib only: templates, project, context, entities, versions, publish, env, hooks, usd_pointer, fileio, doctor, settings, system, install, errors, version_dirs, tools, textures (texture processor)
 src/scheinwerk/library/   asset library (spec §17), stdlib only, never imports project/context/entities
 src/scheinwerk/cli.py  argparse `sw` command (cli_lib.py: `sw lib`)
 src/scheinwerk/gui/    PySide6 widgets, actions, theme.qss
