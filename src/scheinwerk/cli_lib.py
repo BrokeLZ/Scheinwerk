@@ -182,8 +182,10 @@ def _print_entry(entry: dict) -> None:
     target = (entry.get("target") or {}).get("item")
     head = [entry["type"], entry["name"], entry["status"]]
     if target:
-        head.append(f"-> {target}" + (f" as {entry['target']['variant']}"
-                                      if entry["target"].get("variant") else ""))  # fmt: skip
+        head.append(
+            f"-> {target}"
+            + (f" as {entry['target']['variant']}" if entry["target"].get("variant") else "")
+        )
     print("  ".join(head))
     for variant, files in entry["variants"].items():
         for f in files:
@@ -205,8 +207,13 @@ def _print_unused(unused: list[dict]) -> None:
 
 def _detect(library: Library, tools: HoiioTools, paths: list[str]):
     info = tools.info
-    return detect([Path(p) for p in paths], tools.probe, info.srgb_texture, info.linear_rec709,
-                  library=library)  # fmt: skip
+    return detect(
+        [Path(p) for p in paths],
+        tools.probe,
+        info.srgb_texture,
+        info.linear_rec709,
+        library=library,
+    )
 
 
 def cmd_detect(args: argparse.Namespace) -> None:
@@ -229,8 +236,9 @@ def _retype(entry: dict, type_: str, tools: HoiioTools) -> None:
             info = tools.probe(expand(f["path"])[0])
             if type_ == "hdri":
                 if not info.is_float:
-                    raise ScheinwerkError(f"{Path(f['path']).name} isn't a float image: "
-                                          "it can't be an HDRI.")  # fmt: skip
+                    raise ScheinwerkError(
+                        f"{Path(f['path']).name} isn't a float image: it can't be an HDRI."
+                    )
                 f["role"], f["color_space"] = "hdri", tools.info.linear_rec709
             else:
                 f["role"] = "data" if info.channels == 1 else "color"
@@ -260,8 +268,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         _print_unused(result.unused)
     if not entries:
         raise ScheinwerkError("Nothing to ingest.")
-    one = {"--name": args.name, "--type": args.type, "--item": args.item,
-           "--variant": args.variant}  # fmt: skip
+    one = {"--name": args.name, "--type": args.type, "--item": args.item, "--variant": args.variant}
     given = [k for k, v in one.items() if v]
     if given and len(entries) != 1:
         raise ScheinwerkError(
@@ -274,8 +281,10 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if args.name:
             entry["name"] = args.name
         if args.item or args.variant:
-            entry["target"] = {"item": args.item or (entry.get("target") or {}).get("item"),
-                               "variant": args.variant}  # fmt: skip
+            entry["target"] = {
+                "item": args.item or (entry.get("target") or {}).get("item"),
+                "variant": args.variant,
+            }
         entry["categories"] = [*entry.get("categories", []), *(args.category or [])]
         entry["tags"] = [*entry.get("tags", []), *(args.tag or [])]
         if args.size:
@@ -288,8 +297,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         raise ScheinwerkError(f"Needs input: {', '.join(blocked)}. Edit the plan and use --plan.")
     warned = [e["name"] for e in entries if e.get("status") == "warning"]
     if warned and not args.yes:
-        raise ScheinwerkError(f"Warnings for {', '.join(warned)}: check them, then run again "
-                              "with --yes.")  # fmt: skip
+        raise ScheinwerkError(
+            f"Warnings for {', '.join(warned)}: check them, then run again with --yes."
+        )
     failed = 0
     for entry in entries:
         try:
@@ -301,6 +311,18 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         item = version.item
         print(f"{item.type}/{item.id} {version.path.name}  {item.name}")
     return 1 if failed else 0
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    """The library browser in its own process: the CLI never imports GUI code."""
+    import importlib.util
+    import subprocess
+
+    if importlib.util.find_spec("PySide6") is None:
+        raise ScheinwerkError(
+            "The GUI needs PySide6. In the Scheinwerk repo run: uv sync --extra gui"
+        )
+    return subprocess.call([sys.executable, "-m", "scheinwerk.gui.library"])
 
 
 def cmd_rebuild(args: argparse.Namespace) -> None:
@@ -352,8 +374,9 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     q.add_argument("--usd", action="store_true", help="models: the component file")
     q.add_argument("--env", action="store_true", help="as $SW_LIBRARY/… (for non-USD parms)")
 
-    q = add("detect", cmd_detect, "show what ingest would make of files (writes nothing)",
-            (json_only,))  # fmt: skip
+    q = add(
+        "detect", cmd_detect, "show what ingest would make of files (writes nothing)", (json_only,)
+    )
     q.add_argument("paths", nargs="+", metavar="files|folder|zip")
 
     q = add("ingest", cmd_ingest, "ingest files, folders or zips as library items")
@@ -365,11 +388,18 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     q.add_argument("--variant", help="as this variant (other variants are kept)")
     q.add_argument("--category", action="append", metavar="C")
     q.add_argument("--tag", action="append", metavar="T")
-    q.add_argument("--size", nargs=2, type=float, metavar=("W", "H"),
-                   help="real-world size the maps cover, in metres")  # fmt: skip
+    q.add_argument(
+        "--size",
+        nargs=2,
+        type=float,
+        metavar=("W", "H"),
+        help="real-world size the maps cover, in metres",
+    )
     q.add_argument("--scale", type=float, help="models: scale on top of the file's units")
     q.add_argument("-m", "--message", default="", help="comment")
     q.add_argument("--yes", action="store_true", help="ingest entries that have warnings")
+
+    add("gui", cmd_gui, "open the library browser (Browse and Ingest)")
 
     q = add("rebuild", cmd_rebuild, "make a new version from a version's originals")
     q.add_argument("item", help="item id, or its display name when unique")
