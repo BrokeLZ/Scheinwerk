@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLineEdit
 
 from scheinwerk.core.textures import ImageInfo
@@ -246,6 +247,26 @@ def test_metadata_fields_suggest_values_in_use(window: LibraryBrowser, tmp_path:
     browse_tags = window.browse.detail.widget().findChildren(QLineEdit)[2]
     browse_tags.setText("rust, su")
     assert suggestions(browse_tags) == ["sun"]
+
+
+def shown(edit: QLineEdit, qapp) -> list[str]:
+    for _ in range(3):
+        qapp.processEvents()
+    c = edit.completer()
+    m = c.completionModel()
+    return [m.index(i, 0).data() for i in range(m.rowCount())] if c.popup().isVisible() else []
+
+
+def test_clicking_a_field_shows_every_suggestion(window, qapp, tmp_path: Path) -> None:
+    view = window.ingest
+    view.add_plans(plan(tmp_path)["entries"])
+    tags = next(e for e in view.detail.widget().findChildren(QLineEdit)
+                if e.placeholderText() == "rust, worn")  # fmt: skip
+    QTest.mouseClick(tags, Qt.MouseButton.LeftButton)
+    assert shown(tags, qapp) == ["rust", "sun"]  # nothing typed yet
+    tags.completer().popup().hide()
+    QTest.keyClicks(tags, "rust,")  # a comma offers everything again
+    assert shown(tags, qapp) == ["rust", "sun"]
 
 
 def test_clear_done_and_clear_all(window: LibraryBrowser, tmp_path: Path) -> None:
