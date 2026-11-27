@@ -1272,6 +1272,7 @@ The library browser is its own window (`sw lib gui`, also a dockable panel in Ho
 ```text
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ [Browse] [Ingest]                 [Add files…] [Add folder…] [Ingest all] │
+│                                                  [Clear done] [Clear all] │
 ├───────────────────────────────┬──────────────────────────────────────────┤
 │ Entries                       │ Selected entry                           │
 │  ▣ thumb  Rusty Metal 02      │ type · display name · target item        │
@@ -1288,7 +1289,7 @@ The library browser is its own window (`sw lib gui`, also a dockable panel in Ho
 - **Each entry** shows a thumbnail of its source, the detected type and display name, and a status: *ready*, *needs input* (something ambiguous, e.g. the normal convention), *warning* (e.g. the same files were ingested before, by `sha256`), *queued*, *processing*, *done* (click to show the item in Browse) or *failed* (with the error; can be edited and submitted again).
 - **The detail of the selected entry** shows everything detection decided, and all of it can be changed: type; display name; target (a new item, or an existing item as a new variant or a new version); variants and their files with role, source colour space, flip green and invert; workflow and metal threshold; `size_m` and `displacement`; for models the scale (with the resulting size in metres); categories, tags, credits, license, source URL. Unknown files can be assigned or skipped.
 - **Several entries selected:** the fields they share (categories, tags, credits, license) can be set for all of them at once, e.g. for a batch of downloads from one site.
-- **Submitting:** nothing is written until an entry is submitted, with its own *Ingest* button or with *Ingest all* (every entry that is *ready* or *warning*; *needs input* entries are skipped and say why). Submitted entries run in the background as `sw lib ingest --plan` jobs, a few at a time, so the window (and Houdini) stays usable; *Remove* drops an entry that isn't running.
+- **Submitting:** nothing is written until an entry is submitted, with its own *Ingest* button or with *Ingest all* (every entry that is *ready* or *warning*; *needs input* entries are skipped and say why). Submitted entries run in the background as `sw lib ingest --plan` jobs, a few at a time, so the window (and Houdini) stays usable; *Remove* drops an entry that isn't running. *Clear done* drops every *done* entry; *Clear all* drops every entry that isn't running, and the list of files not used. Both only clear the list: nothing on disk changes.
 - Entries live only in the open window; closing it forgets entries that weren't submitted (no state is stored anywhere).
 
 ### 17.12 Steps

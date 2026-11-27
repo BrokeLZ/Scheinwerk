@@ -126,6 +126,8 @@ class IngestView(QWidget):
         for label, slot in (
             ("Add files…", self.add_files),
             ("Add folder…", self.add_folder),
+            ("Clear done", self.clear_done),
+            ("Clear all", self.clear_all),
             ("Ingest all", self.ingest_all),
         ):
             button = QPushButton(label)
@@ -286,6 +288,21 @@ class IngestView(QWidget):
         if entry.busy and not (entry.job and self.queue.cancel(entry.job)):
             return
         self.entries.remove(entry)
+        self._fill()
+        self._show_detail()
+
+    def clear_done(self) -> None:
+        """Forget the ingested entries (the list only: nothing on disk changes)."""
+        self._keep([e for e in self.entries if e.status != "done"])
+
+    def clear_all(self) -> None:
+        """Forget every entry that isn't running, and the files-not-used list."""
+        self._keep([e for e in self.entries if e.busy and not self.queue.cancel(e.job)])
+        self.unused = []
+        self._update_info()
+
+    def _keep(self, entries: list[Entry]) -> None:
+        self.entries = entries
         self._fill()
         self._show_detail()
 

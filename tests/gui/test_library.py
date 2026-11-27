@@ -217,6 +217,25 @@ def test_ingest_all_skips_needs_input_and_done(window: LibraryBrowser, tmp_path:
     assert len([j for j in window.queue.jobs if j.args[1] == "ingest"]) == 1
 
 
+def test_clear_done_and_clear_all(window: LibraryBrowser, tmp_path: Path) -> None:
+    view = window.ingest
+    plans = plan(tmp_path)["entries"]
+    view.add_plans(
+        [{**plans[0], "name": n} for n in ("Done", "Ready", "Running")],
+        unused=[{"path": str(tmp_path / "x.webp"), "reason": "can't read"}],
+    )
+    done, _, running = view.entries
+    view.submit(done)
+    window.queue.finish(window.queue.jobs[-1], out="texture_set/done_x1y2z3 v001  Done\n")
+    view.submit(running)  # queued; the stub queue can't cancel it
+    view.clear_done()
+    assert [e.plan["name"] for e in view.entries] == ["Ready", "Running"]
+    assert view.list.count() == 2
+    view.clear_all()
+    assert view.entries == [running] and view.list.count() == 1  # running entries stay
+    assert view.unused == [] and "not used" not in view.info.text()
+
+
 def test_target_from_a_drop_on_an_item(window: LibraryBrowser, tmp_path: Path) -> None:
     view = window.ingest
     view.add_plans(plan(tmp_path)["entries"], target={"item": "rust_a1b2c3", "variant": "winter"})
