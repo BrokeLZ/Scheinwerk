@@ -63,6 +63,12 @@ class Item:
     def tags(self) -> list[str]:
         return list(self.meta.get("tags") or [])
 
+    @property
+    def added(self) -> str:
+        """When the first finalized version was made (ISO text, sorts by time); '' if none."""
+        first = next((v for v in reversed(self.versions()) if v.finalized), None)
+        return str((first.info or {}).get("created") or "") if first else ""
+
     def versions(self) -> list[LibraryVersion]:
         """v### folders, newest first, incomplete ones included."""
         return [LibraryVersion(self, d) for d in version_dirs(self.path)]
@@ -198,10 +204,18 @@ def update_meta(
     remove_categories: list[str] = (),
     add_tags: list[str] = (),
     remove_tags: list[str] = (),
+    fields: dict | None = None,
 ) -> None:
     """Edit item.json (the only file edited after creation). Unknown keys are kept.
-    Removals win over additions of the same value."""
+    Removals win over additions of the same value. `fields`: the other metadata (spec §17.4);
+    an empty value removes the key."""
     data = {"schema": 1, **item.meta}
+    for key, value in (fields or {}).items():
+        value = _check_field(key, value)
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
     if name is not None:
         if not name.strip():
             raise InvalidName("The display name can't be empty.")
@@ -213,6 +227,30 @@ def update_meta(
     tags -= {clean_tag(t) for t in remove_tags}
     data["categories"], data["tags"] = sorted(cats), sorted(tags)
     write_json(item.path / ITEM_JSON, data)
+
+
+TEXT_FIELDS = ("description", "credits", "license", "source_url")
+
+
+def _check_field(key: str, value: object) -> object:
+    """A cleaned item.json value, or None to remove it."""
+    if value in (None, "", []):
+        return None
+    if key in TEXT_FIELDS:
+        if not isinstance(value, str):
+            raise InvalidName(f"{key} must be text.")
+        return value.strip() or None
+    if key == "size_m":
+        ok = isinstance(value, (list, tuple)) and len(value) == 2
+        if not ok or not all(isinstance(v, (int, float)) and v > 0 for v in value):
+            raise InvalidName("size_m must be a width and a height in metres, both above 0.")
+        return [float(v) for v in value]
+    if key == "displacement":
+        ok = isinstance(value, dict) and set(value) == {"mid", "height_m"}
+        if not ok or not all(isinstance(v, (int, float)) for v in value.values()):
+            raise InvalidName("displacement must have `mid` and `height_m` (numbers).")
+        return {"mid": float(value["mid"]), "height_m": float(value["height_m"])}
+    raise InvalidName(f"{key!r} is not an item.json field that can be set here.")
 
 
 def find_item(library: Library, query: str) -> Item:

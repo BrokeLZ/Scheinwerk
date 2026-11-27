@@ -15,8 +15,13 @@ def search(
     category: str | None = None,
     tags: list[str] = (),
     text: str | None = None,
+    has_variants: bool | None = None,
+    udim: bool | None = None,
+    workflow: str | None = None,
+    sort: str = "name",
 ) -> list[Item]:
-    """Items matching every given filter, by display name then id.
+    """Items matching every given filter, by display name then id (`sort="added"`: newest
+    first). `has_variants`, `udim` and `workflow` read the latest version's version.json.
 
     `category` also finds items in its sub-categories; `tags` must all be present; every word
     of `text` must appear (any case) in the display name, id, variant names of the latest
@@ -34,7 +39,21 @@ def search(
             haystack = _search_text(item)
             if not all(w in haystack for w in words):
                 continue
+        if has_variants is not None or udim is not None or workflow is not None:
+            latest = item.latest()
+            info = (latest.info if latest else None) or {}
+            if (
+                has_variants is not None
+                and (len(latest.variants()) > 1 if latest else False) != has_variants
+            ):
+                continue
+            if udim is not None and bool(info.get("udim")) != udim:
+                continue
+            if workflow is not None and info.get("workflow") != workflow:
+                continue
         found.append(item)
+    if sort == "added":
+        return sorted(found, key=lambda i: (i.added, i.id), reverse=True)
     return sorted(found, key=lambda i: (i.name.casefold(), i.id))
 
 

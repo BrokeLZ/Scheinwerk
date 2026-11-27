@@ -239,3 +239,61 @@ def test_find_item(lib: Library) -> None:
         find_item(lib, "Oak")  # the name isn't unique: the matches are listed
     with pytest.raises(NotFound):
         find_item(lib, "birch")
+
+
+# --- the other item.json fields (the browser edits them in place, spec §17.11) -----------
+
+
+def test_update_meta_fields(lib: Library) -> None:
+    item = create_item(lib, "texture_set", "Rusty")
+    update_meta(
+        item,
+        fields={
+            "description": " Peeling ",
+            "credits": "ambientCG",
+            "license": "CC0",
+            "source_url": "https://x",
+            "size_m": [2, 1.5],
+            "displacement": {"mid": 0.5, "height_m": 0.02},
+        },
+    )
+    meta = item.meta
+    assert meta["description"] == "Peeling" and meta["size_m"] == [2.0, 1.5]
+    assert meta["displacement"] == {"mid": 0.5, "height_m": 0.02}
+    update_meta(item, fields={"size_m": None, "description": ""})
+    assert "size_m" not in item.meta and "description" not in item.meta
+
+
+@pytest.mark.parametrize(
+    ("fields", "error"),
+    [
+        ({"size_m": [0, 1]}, "size_m"),
+        ({"size_m": [1]}, "size_m"),
+        ({"displacement": {"mid": 0.5}}, "displacement"),
+        ({"name": "x"}, "field"),
+        ({"credits": 3}, "credits"),
+    ],
+)
+def test_update_meta_bad_fields(lib: Library, fields: dict, error: str) -> None:
+    item = create_item(lib, "hdri", "Sky")
+    with pytest.raises(InvalidName, match=error):
+        update_meta(item, fields=fields)
+
+
+def test_added_is_the_first_finalized_version(lib: Library) -> None:
+    make_item(
+        lib,
+        "model",
+        "oak_k3f9q2",
+        {
+            1: {**MAIN, "created": "2026-01-02T10:00:00+01:00"},
+            2: {**MAIN, "created": "2026-03-01T10:00:00+01:00"},
+        },
+    )
+    make_item(lib, "model", "new_a1b2c3", {1: None})
+    oak, new = (
+        sorted(lib.items(), key=lambda i: i.id)[1],
+        sorted(lib.items(), key=lambda i: i.id)[0],
+    )
+    assert oak.added == "2026-01-02T10:00:00+01:00"
+    assert new.added == ""

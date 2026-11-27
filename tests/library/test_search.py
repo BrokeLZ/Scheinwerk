@@ -126,3 +126,43 @@ def test_category_counts_include_parents(stocked: Library) -> None:
 
 def test_tag_counts(stocked: Library) -> None:
     assert tag_counts(search(stocked, type_="texture_set")) == {"clean": 1, "rust": 1, "worn": 1}
+
+
+def test_filters_from_version_json(lib: Library) -> None:
+    make_item(
+        lib, "texture_set", "a_a1b2c3", {1: {**MAIN, "udim": True, "workflow": "metal_rough"}}
+    )
+    make_item(
+        lib,
+        "texture_set",
+        "b_d4e5f6",
+        {
+            1: {
+                "variants": {"main": {"version": 1}, "w": {"version": 1}},
+                "workflow": "spec_gloss",
+                "udim": False,
+            }
+        },
+    )
+    assert ids(search(lib, has_variants=True)) == ["b_d4e5f6"]
+    assert ids(search(lib, udim=True)) == ["a_a1b2c3"]
+    assert ids(search(lib, workflow="spec_gloss")) == ["b_d4e5f6"]
+
+
+def test_sort_by_date_added_newest_first(lib: Library) -> None:
+    make_item(
+        lib,
+        "hdri",
+        "old_a1b2c3",
+        {1: {**MAIN, "created": "2026-01-01T00:00:00+00:00"}},
+        name="Zebra",
+    )
+    make_item(
+        lib,
+        "hdri",
+        "new_d4e5f6",
+        {1: {**MAIN, "created": "2026-06-01T00:00:00+00:00"}},
+        name="Alpha",
+    )
+    assert ids(search(lib, sort="added")) == ["new_d4e5f6", "old_a1b2c3"]
+    assert ids(search(lib)) == ["new_d4e5f6", "old_a1b2c3"]  # by name: Alpha, Zebra
