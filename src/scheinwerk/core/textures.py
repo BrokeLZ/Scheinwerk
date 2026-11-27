@@ -26,7 +26,13 @@ PREVIEW_VIEW = "ACES 1.0 - SDR Video"  # tone-maps, so HDRIs don't clip (spec §
 FLOAT_TYPES = ("half", "float")
 
 # Names of the two colour spaces the processor needs, as different OCIO configs spell them.
-_SRGB_TEXTURE = ("sRGB - Texture", "srgb_texture", "Utility - sRGB - Texture", "sRGB")
+_SRGB_TEXTURE = (
+    "sRGB - Texture",
+    "sRGB Encoded Rec.709 (sRGB)",  # OCIO's built-in default config, used when $OCIO is unset
+    "srgb_texture",
+    "Utility - sRGB - Texture",
+    "sRGB",
+)
 _LINEAR_REC709 = ("Linear Rec.709 (sRGB)", "lin_rec709", "Utility - Linear - sRGB", "linear")
 
 

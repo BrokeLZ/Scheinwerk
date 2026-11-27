@@ -63,6 +63,9 @@ def test_other_config_names() -> None:
         )
     )
     assert (info.srgb_texture, info.linear_rec709) == ("srgb_texture", "lin_rec709")
+    # OCIO's built-in default config (ocio://default), which hoiiotool uses when $OCIO is unset
+    cg = tx.parse_tool_info(HELP.replace("sRGB - Texture", "sRGB Encoded Rec.709 (sRGB)"))
+    assert cg.srgb_texture == "sRGB Encoded Rec.709 (sRGB)"
     with pytest.raises(NotFound, match="sRGB"):
         _ = tx.parse_tool_info(HELP.replace("sRGB - Texture", "xyz")).srgb_texture
 

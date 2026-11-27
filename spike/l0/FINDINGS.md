@@ -1,6 +1,9 @@
 # L0 findings (macOS, Houdini 21.0.596 Indie)
 
-Windows: pending (`run_all.py` → `out/windows/REPORT.md`). Everything below is from macOS
+Windows: pending (`run_all.py` → `out/windows/REPORT.md`).
+First Windows note (Houdini 21.0.596, from the test suite, not `run_all.py`): with `OCIO` unset,
+`hoiiotool` uses `ocio://default`, which names the sRGB texture space `sRGB Encoded Rec.709 (sRGB)`
+(now accepted by `core/textures.py`). Everything below is from macOS
 (Apple Silicon, Karma XPU on the CPU device). Each item: what was found, then the text proposed
 for the spec. The proposals below are now in `docs/spec.md` §17.
 
