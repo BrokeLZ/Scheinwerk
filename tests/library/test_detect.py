@@ -273,6 +273,76 @@ def test_highest_resolution_wins_for_the_same_role(tmp_path: Path) -> None:
     assert {Path(p).name for p in entry["skipped"]} == {"w_Color_2k.png"}
 
 
+def test_quixel_surface_subfolders_belong_to_the_set(tmp_path: Path) -> None:
+    # Quixel Bridge: the maps, lower-res copies in Thumbs/<res>/, a render in previews/
+    root = tmp_path / "rock_jagged_vclgff3lw"
+    maps = ("Albedo.jpg", "Displacement.exr", "Normal.jpg", "Roughness.jpg")
+    files(root, "vclgff3lw.json", "vclgff3lw_Preview.png", *(f"vclgff3lw_4K_{m}" for m in maps))
+    for res in ("1k", "2k", "4k"):
+        files(root / "Thumbs" / res, *(f"vclgff3lw_{res.upper()}_{m[:-4]}.jpg" for m in maps))
+    files(root / "previews", "vclgff3lw_Popup_3840_sp.jpg")
+    result = run([root])
+    [entry] = result.entries
+    assert entry["type"] == "texture_set" and result.unused == []
+    assert roles(entry) == {  # the top folder's files, not the 4k copies in Thumbs/4k/
+        "vclgff3lw_4K_Albedo.jpg": "basecolor",
+        "vclgff3lw_4K_Displacement.exr": "height",
+        "vclgff3lw_4K_Normal.jpg": "normal",
+        "vclgff3lw_4K_Roughness.jpg": "roughness",
+    }
+    assert all(Path(f["path"]).parent == root for f in entry["variants"]["main"])
+    assert len(entry["skipped"]) == 2 + 12 + 1  # json + preview, Thumbs, previews/
+
+
+def test_quixel_single_map_surface(tmp_path: Path) -> None:
+    # Quixel "surface imperfections": one roughness map (3-channel 8-bit), its copies, previews
+    root = tmp_path / "surface_imperfections_vk1iadec"
+    files(root, "vk1iadec.json", "vk1iadec_Preview.png", "vk1iadec_4K_Roughness.jpg")
+    files(root / "Thumbs" / "1k", "vk1iadec_1K_Roughness.jpg")
+    files(root / "Thumbs" / "2k", "vk1iadec_2K_Roughness.jpg")
+    files(root / "previews", "vk1iadec_Popup_3840_sp.jpg")
+    result = run([root])
+    [entry] = result.entries
+    assert entry["type"] == "texture" and result.unused == []
+    assert roles(entry) == {"vk1iadec_4K_Roughness.jpg": "data"}  # by its name, not its channels
+    assert entry["variants"]["main"][0]["color_space"] == "raw"
+    assert len(entry["skipped"]) == 5  # json, both previews, the 1k and 2k copies
+
+
+@pytest.mark.parametrize(
+    ("name", "role"),
+    [("wall_Albedo.png", "color"), ("wall_Height.png", "data"), ("wall.png", "color")],
+)
+def test_a_single_texture_takes_its_role_from_the_name(tmp_path: Path, name, role) -> None:
+    files(tmp_path / "t", name)
+    [entry] = run([tmp_path / "t"]).entries
+    assert roles(entry) == {name: role}
+
+
+def test_leftovers_go_to_the_named_map_not_the_hdri(tmp_path: Path) -> None:
+    files(tmp_path / "f", "aaa_sky.exr", "rock_Roughness.png", "rock_Preview.png")
+    probe = Probe(**{"aaa_sky.exr": ImageInfo(64, 32, 3, "float")})
+    entries = {e["type"]: e for e in run([tmp_path / "f"], probe).entries}
+    assert entries["hdri"]["skipped"] == []
+    assert [Path(p).name for p in entries["texture"]["skipped"]] == ["rock_Preview.png"]
+
+
+def test_a_subfolder_with_other_maps_stays_apart(tmp_path: Path) -> None:
+    files(tmp_path / "dl", "wall_Color.png", "wall_Normal.png", "wall_preview.jpg")
+    files(tmp_path / "dl" / "rock", "rock_Color.png", "rock_Normal.png", "rock_preview.jpg")
+    entries = {e["name"]: e for e in run([tmp_path / "dl"]).entries}
+    assert sorted(entries) == ["Rock", "Wall"]
+    assert [Path(p).name for p in entries["Wall"]["skipped"]] == ["wall_preview.jpg"]
+    assert [Path(p).name for p in entries["Rock"]["skipped"]] == ["rock_preview.jpg"]
+
+
+def test_subfolders_of_a_folder_without_a_set_stay_separate(tmp_path: Path) -> None:
+    files(tmp_path / "dl", "readme_preview.jpg")
+    for name in ("a", "b"):
+        files(tmp_path / "dl" / name, f"{name}_Color.png", f"{name}_Normal.png")
+    assert sorted(e["name"] for e in run([tmp_path / "dl"]).entries) == ["A", "B", "Readme Preview"]
+
+
 def test_hdri_and_texture(tmp_path: Path) -> None:
     folder = tmp_path / "skies"
     files(

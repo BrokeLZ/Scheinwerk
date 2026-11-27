@@ -183,7 +183,7 @@ def _pick(candidates: list[Map]) -> tuple[Map, list[Map]]:
         conv = {"gl": 0, None: 1, "dx": 2}[m.name.convention]
         fmt = m.path.suffix.lower()
         order = FORMAT_PREFERENCE.index(fmt) if fmt in FORMAT_PREFERENCE else 99
-        return (conv, -m.name.resolution, order, str(m.path))
+        return (conv, -m.name.resolution, order, len(m.path.parts), str(m.path))
 
     ranked = sorted(candidates, key=rank)
     return ranked[0], ranked[1:]
@@ -306,19 +306,22 @@ def _is_hdri(group: list[Map]) -> bool:
 
 
 def _single(group: list[Map], srgb: str, linear: str) -> dict:
-    """HDRI (float, 2:1) or texture (one channel: data, else colour), variants allowed."""
+    """HDRI (float, 2:1) or texture (colour or data: by the role in its name, else one channel
+    is data), variants allowed, the best map of each variant (as in a set)."""
     first = group[0]
     info = first.info or ImageInfo(0, 0, 3, "uint8")
     hdri = _is_hdri(group)
-    role = "hdri" if hdri else ("data" if info.channels == 1 else "color")
+    if hdri:
+        role = "hdri"
+    elif first.name.role:
+        role = "color" if first.name.role in COLOUR_SOURCE_ROLES else "data"
+    else:
+        role = "data" if info.channels == 1 else "color"
     entry = _entry("hdri" if hdri else "texture", _display(first.name.display) or "Untitled")
-    for m in group:
-        entry["variants"].setdefault(m.variant, [])
-        if entry["variants"][m.variant]:
-            entry["skipped"].append(str(m.path))
-            continue
-        entry["variants"][m.variant].append(_file(m, role, srgb, linear))
-    entry["variants"] = dict(sorted(entry["variants"].items()))
+    for variant in sorted({m.variant for m in group}):
+        best, rest = _pick([m for m in group if m.variant == variant])
+        entry["variants"][variant] = [_file(best, role, srgb, linear)]
+        entry["skipped"] += [str(m.path) for m in rest]
     return entry
 
 
@@ -354,15 +357,21 @@ def _batch(
         groups.setdefault(m.name.base if m.name.role else f"\0{m.name.base}", []).append(m)
     sets = [g for g in groups.values() if len({m.name.role for m in g if m.name.role}) >= 2]
     singles = [g for g in groups.values() if g not in sets]
-    entries = [_texture_set(g, srgb, linear) for g in sets]
+    named = [g for g in singles if any(m.name.role for m in g)]  # maps named after a role
+    owners = [_texture_set(g, srgb, linear) for g in sets] + [
+        _single(g, srgb, linear) for g in named
+    ]  # the entries that previews and other files next to them belong to
+    entries = list(owners)
     leftovers = [*others]
     for g in singles:
-        if sets and not any(m.name.role for m in g) and not _is_hdri(g):
-            leftovers += [m.path for m in g]  # previews and such, dropped with a set
+        if g in named:
+            continue
+        if owners and not _is_hdri(g):
+            leftovers += [m.path for m in g]  # previews and such, dropped with the maps
         else:
             entries.append(_single(g, srgb, linear))
-    if len(sets) == 1:
-        entries[0]["skipped"] += [str(p) for p in leftovers]
+    if len(owners) == 1:
+        owners[0]["skipped"] += [str(p) for p in leftovers]
     else:
         reason = "not part of any entry"
         out.unused += [{"path": str(p), "reason": reason} for p in leftovers]
@@ -378,9 +387,23 @@ def _hidden(name: str) -> bool:
     return any(fnmatch.fnmatchcase(name, p) for p in DEFAULTS["ignore"])
 
 
+def _map_bases(files: list[Path]) -> set[str]:
+    """The base names of the images here that are named after a role."""
+    names = (parse_name(f.stem) for f in files if f.suffix.lower() in IMAGES)
+    return {n.base for n in names if n.role}
+
+
+def _all_files(folder: Path) -> list[Path]:
+    return sorted(f for f in folder.rglob("*") if f.is_file() and not any(
+        _hidden(p) for p in f.relative_to(folder).parts))  # fmt: skip
+
+
 def _walk(folder: Path, batches: list[list[tuple[Path, str | None]]]) -> None:
-    """One batch per folder; `Var1/`-style subfolders join their parent's batch as variants."""
+    """One batch per folder; `Var1/`-style subfolders join their parent's batch as variants.
+    Under a folder whose own images are named after roles, a subfolder joins it too when it has
+    no other maps (Quixel's `Thumbs/2k/` copies, `previews/`); one with other maps stays apart."""
     batch: list[tuple[Path, str | None]] = []
+    subfolders: list[Path] = []
     for entry in sorted(folder.iterdir()):
         if _hidden(entry.name):
             continue
@@ -390,9 +413,16 @@ def _walk(folder: Path, batches: list[list[tuple[Path, str | None]]]) -> None:
                 batch += [(f, variant) for f in sorted(entry.iterdir())
                           if f.is_file() and not _hidden(f.name)]  # fmt: skip
             else:
-                _walk(entry, batches)
+                subfolders.append(entry)
         elif entry.is_file():
             batch.append((entry, None))
+    bases = _map_bases([f for f, variant in batch if variant is None])
+    for sub in subfolders:
+        inside = _all_files(sub) if bases else []
+        if inside and _map_bases(inside) <= bases:
+            batch += [(f, None) for f in inside]
+        else:
+            _walk(sub, batches)
     if batch:
         batches.append(batch)
 
