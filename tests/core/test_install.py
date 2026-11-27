@@ -111,3 +111,17 @@ def test_integration_files_are_valid_xml() -> None:
     assert (houdini / "python3.11libs/pythonrc.py").read_bytes() == (
         houdini / "python3.13libs/pythonrc.py"
     ).read_bytes()
+
+
+def test_install_with_a_library(mac_home: Path, tmp_path: Path) -> None:
+    # spec §17.2: SW_LIBRARY and the USD search path, plain values (no "prepend")
+    lib = tmp_path / "My Library"
+    [first, _] = install_houdini(REPO, mac_home, "darwin", library=lib)
+    env = json.loads(first.read_text(encoding="utf-8"))["env"]
+    assert env[-2:] == [
+        {"SW_LIBRARY": lib.as_posix()},
+        {"PXR_AR_DEFAULT_SEARCH_PATH": lib.as_posix()},
+    ]
+    [first, _] = install_houdini(REPO, mac_home, "darwin")  # library no longer set
+    keys = {k for e in json.loads(first.read_text(encoding="utf-8"))["env"] for k in e}
+    assert not keys & {"SW_LIBRARY", "PXR_AR_DEFAULT_SEARCH_PATH"}

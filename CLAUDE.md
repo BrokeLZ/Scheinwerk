@@ -27,7 +27,7 @@ uv run scheinwerk-gui        # GUI
 ```text
 src/scheinwerk/core/   stdlib only: templates, project, context, entities, versions, publish, env, hooks, usd_pointer, fileio, doctor, settings, system, install, errors
 src/scheinwerk/library/   asset library (spec §17), stdlib only, never imports project/context/entities
-src/scheinwerk/cli.py  argparse `sw` command
+src/scheinwerk/cli.py  argparse `sw` command (cli_lib.py: `sw lib`)
 src/scheinwerk/gui/    PySide6 widgets, actions, theme.qss
 src/scheinwerk/dcc/    adapters (houdini, nuke, blender)
 src/scheinwerk/resources/templates/   default empty workfiles copied into new projects

@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from scheinwerk import __version__
+from scheinwerk import __version__, cli_lib
 from scheinwerk.core.context import Context
 from scheinwerk.core.doctor import check
 from scheinwerk.core.entities import Department, Entity, Task
@@ -27,6 +27,7 @@ from scheinwerk.core.publish import (
     ingest,
     set_current,
 )
+from scheinwerk.core.settings import load_settings
 from scheinwerk.core.templates import parse_frames, validate_name
 from scheinwerk.core.versions import Product
 
@@ -473,9 +474,15 @@ def cmd_env(args: argparse.Namespace) -> None:
             print(f"{key}={value}")
 
 
+def _library_root() -> Path | None:
+    """This machine's library (user setting), if it is set up and there."""
+    root = load_settings().get("library")
+    return Path(root) if root and (Path(root) / "library.json").is_file() else None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     project = _project()
-    issues = check(project)
+    issues = check(project, _library_root())
     if args.json:
         _print_json(
             {
@@ -500,7 +507,7 @@ def _repo() -> Path:
 
 
 def cmd_install(args: argparse.Namespace) -> None:
-    for path in install_houdini(_repo()):
+    for path in install_houdini(_repo(), library=_library_root()):
         print(path)
 
 
@@ -654,7 +661,8 @@ def build_parser() -> argparse.ArgumentParser:
     add(
         "doctor",
         cmd_doctor,
-        "report naming problems, conflict copies, absolute paths, empty versions",
+        "report naming problems, conflict copies, absolute paths, empty versions, "
+        "unpublished and missing library references",
     )
 
     for name, func, help_ in (
@@ -663,6 +671,8 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         p = add(name, func, help_, parents=())
         p.add_argument("dcc", choices=("houdini",))
+
+    cli_lib.add_parser(sub)
 
     p = add("gui", cmd_gui, "open the Scheinwerk browser", parents=())
     p.add_argument("path", nargs="?", help="open the project (and select what) this path points at")

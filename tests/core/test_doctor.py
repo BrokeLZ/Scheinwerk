@@ -161,6 +161,7 @@ def test_order_by_kind_then_path(proj: Project, hero) -> None:
     touch(hero.path / "mdl/main/work/x_Conflict.hip")
     (hero.path / "Bad").mkdir()
     touch(hero.path / "publish/_usd/fx/v001/x.usda", b"@../../../../fx/main/cache/a.vdb@")
+    touch(hero.path / "publish/_usd/fx/v001/y.usda", b"@hdri/sky_a1b2c3/v001/x.exr@")
     kinds = [i.kind for i in check(proj)]
     assert kinds == [
         "invalid name",
@@ -168,9 +169,70 @@ def test_order_by_kind_then_path(proj: Project, hero) -> None:
         "absolute path",
         "empty version",
         "unpublished reference",
+        "missing library item",
     ]
 
 
 def test_issue_is_a_plain_record(proj: Project) -> None:
     issue = Issue("empty version", proj.root / "x")
     assert issue.detail == ""
+
+
+# --- library references (spec §17.8) ---------------------------------------------------------
+
+
+@pytest.fixture
+def library(tmp_path):
+    root = tmp_path / "library"
+    touch(root / "library.json", b'{"schema": 1}')
+    touch(root / "model/oak_k3f9q2/v002/version.json", b'{"schema": 1}')
+    (root / "model/oak_k3f9q2/v003").mkdir()  # incomplete: no version.json
+    return root
+
+
+def test_library_references(proj: Project, hero, library) -> None:
+    touch(
+        hero.path / "publish/_usd/geo/v001/hero_geo_v001.usda",
+        b"prepend references = @model/oak_k3f9q2/v002/oak_k3f9q2.usd@\n"  # fine
+        b"prepend references = @model/oak_k3f9q2/v003/oak_k3f9q2.usd@\n"  # incomplete
+        b"asset inputs:texture:file = @hdri/sky_a1b2c3/v001/sky_a1b2c3_main_v001.exr@\n"
+        b"prepend references = @model/oak_k3f9q2/v003/oak_k3f9q2.usd@\n",  # reported once
+    )
+    touch(hero.path / "comp/main/work/x.nk", b"file $SW_LIBRARY/texture/rust_d4e5f6/v001/a.exr")
+    issues = [(i.kind, i.detail) for i in check(proj, library) if i.kind == "missing library item"]
+    assert issues == [  # by file (comp/… before publish/…), then by reference
+        ("missing library item", "texture/rust_d4e5f6/v001"),
+        ("missing library item", "hdri/sky_a1b2c3/v001"),
+        ("missing library item", "model/oak_k3f9q2/v003"),
+    ]
+
+
+def test_library_references_without_a_library(proj: Project, hero) -> None:
+    touch(hero.path / "publish/a.usda", b"@model/oak_k3f9q2/v002/oak_k3f9q2.usd@")
+    assert found(proj) == [
+        (
+            "missing library item",
+            "assets/hero/publish/a.usda",
+            "model/oak_k3f9q2/v002 (no library set up)",
+        )
+    ]
+
+
+def test_library_paths_are_not_absolute_or_unpublished(proj: Project, hero, library) -> None:
+    touch(hero.path / "publish/a.usda", b"@model/oak_k3f9q2/v002/oak_k3f9q2.usd@")
+    touch(hero.path / "publish/b.usda", b"@$SW_LIBRARY/model/oak_k3f9q2/v002/oak_k3f9q2.usd@")
+    assert check(proj, library) == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"@./model/oak_k3f9q2/v002/x.usd@",
+        b"@../assets/oak_k3f9q2/v002/x.usd@",
+        b"@shots/sq010_0010/v001/x.usd@",
+        b"@model/oak/v002/x.usd@",
+    ],
+)
+def test_project_paths_are_not_library_references(proj: Project, hero, content: bytes) -> None:
+    touch(hero.path / "publish/a.usda", content)
+    assert [i for i in check(proj) if i.kind == "missing library item"] == []

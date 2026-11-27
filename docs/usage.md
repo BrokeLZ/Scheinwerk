@@ -15,10 +15,11 @@ This guide grows with the code. A section that says *not yet available* describe
 5. [Workfile templates](#workfile-templates)
 6. [Hooks](#hooks)
 7. [CLI (`sw`)](#cli-sw)
-8. [GUI](#gui)
-9. [DCC integrations](#dcc-integrations) and [Houdini](#houdini)
-10. [Sync (Synology Drive)](#sync-synology-drive)
-11. [Troubleshooting](#troubleshooting)
+8. [Asset library (`sw lib`)](#asset-library-sw-lib)
+9. [GUI](#gui)
+10. [DCC integrations](#dcc-integrations) and [Houdini](#houdini)
+11. [Sync (Synology Drive)](#sync-synology-drive)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -295,6 +296,7 @@ empty version  /Users/you/projects/myshow/assets/char/hero/publish/pants/v001
 | `absolute path` | A `.usd`/`.usda`/`.nk` contains a drive letter, `/Users/`, `/Volumes/` or `\\server` path (the first one is shown). | Re-export with relative paths (USD ROP: *Use Relative Paths*; Nuke: `[getenv SW_ROOT]/…`). `cache/` is not checked. |
 | `empty version` | A version folder has no files (an export that failed or was cancelled). | Delete it or export into it. |
 | `unpublished reference` | A published `.usd`/`.usda` points into a task's `work/` or `cache/` folder (the first path is shown). Those change and `cache/` isn't synced. | Publish the file first (textures as a product, sims with *Scheinwerk Publish*), point the layer there and publish it again. |
+| `missing library item` | A `.usd`/`.usda`/`.nk` uses a library item version (`model/oak_k3f9q2/v004`, also as `$SW_LIBRARY/…`) that isn't in this machine's library or isn't finished. | Let sync finish, or point it at a version that exists (`sw lib ls`). Says *no library set up* when `sw lib init` hasn't been run here. |
 
 It exits with 1 when it finds anything, so it can run in scripts.
 
@@ -315,7 +317,57 @@ It exits with 1 when it finds anything, so it can run in scripts.
 | `sw context [path]` | What a path means. |
 | `sw env [path] [--shell zsh\|bash\|pwsh]` | `SW_*` variables. |
 | `sw doctor` | Report problems. |
+| `sw lib …` | The asset library (see [below](#asset-library-sw-lib)). |
 | `sw gui [path]` | Open the browser (see [GUI](#gui)). |
+
+## Asset library (`sw lib`)
+
+One library per machine, shared by all projects: finished HDRIs, textures, texture sets and models, each with versions and variants. It's being built in steps ([spec §17](spec.md#17-asset-library)); so far you can set it up, list and search it, edit an item's name, categories and tags, and copy paths. Ingesting, the browser and the Houdini tools come in the next steps.
+
+### Setting it up
+
+```bash
+sw lib init ~/SynologyDrive/library
+```
+
+This creates `library.json` and `_workshop/` (a normal Scheinwerk project for building library assets: departments `mdl` with tasks `main` and `speedtree`, `lookdev`, `tex`) and makes it this machine's library (stored in your user settings, never in a project). `--name` names a new library (default `library`).
+
+On another machine, where the library arrives through sync, run the same command on the synced folder: it only stores the setting and changes nothing in the library.
+
+Then run `sw install houdini` again: the package now also sets `SW_LIBRARY` and `PXR_AR_DEFAULT_SEARCH_PATH` to the library, so library paths in USD resolve in Houdini. Restart Houdini after changing the library.
+
+### Listing and searching
+
+```console
+$ sw lib ls
+model/oak_k3f9q2  Oak  v002  main, winter
+texture_set/rusty_metal_02_a1b2c3  Rusty Metal 02  v001  main
+$ sw lib ls texture_set --category metal --tag rust --search "paint"
+```
+
+Each line: type and item id, display name, latest finished version, its variants. Flags: `[invalid id]` (a folder that isn't an item id), `[no finalized version]`, `[incomplete v003]` (a version that never got its `version.json`, e.g. an interrupted ingest), and `[unknown]` for anything at the library root that doesn't belong there. `--category metal` also finds `metal/painted`; `--tag` can be repeated (all must match); `--search` words must all appear in the name, id, variant names, categories, tags, description or credits. `--json` for scripts.
+
+### Names, categories and tags
+
+```bash
+sw lib meta rusty_metal_02_a1b2c3 --name "Rusty Metal" --add-category metal/painted --add-tag worn --remove-tag old
+sw lib meta "Rusty Metal"        # show it; a display name works when it's unique
+```
+
+Only `item.json` changes; files are never moved, so categories can change any time. Categories are nested with `/`; spaces become `_`.
+
+### Paths to paste
+
+```console
+$ sw lib path oak_k3f9q2 --usd
+model/oak_k3f9q2/v002/oak_k3f9q2.usd
+$ sw lib path oak_k3f9q2 --variant winter
+model/oak_k3f9q2/v002
+$ sw lib path "Rusty Metal" --env
+$SW_LIBRARY/texture_set/rusty_metal_02_a1b2c3/v001
+```
+
+Use the plain (library-relative) form in USD: it's pinned to a version and found through the search path. Use `--env` (`$SW_LIBRARY/…`) only in non-USD places such as SOP/COP parameters or Nuke. `--version N` picks an older finished version.
 
 ## GUI
 
@@ -405,7 +457,7 @@ All colours, fonts and spacing are in `src/scheinwerk/gui/theme.qss` (Qt style s
 
 ## DCC integrations
 
-Any DCC works without a plugin: copy the next version path from the browser, save or export there, finalize. Houdini has a full integration (below); Nuke arrives in Phase 5, Blender in Phase 6.
+Any DCC works without a plugin: copy the next version path from the browser, save or export there, finalize. Houdini has a full integration (below); Nuke arrives in Phase 6, Blender in Phase 7.
 
 ## Houdini
 
@@ -419,7 +471,7 @@ Start Houdini once (so it has a preferences folder), quit it, then in the Schein
 uv run sw install houdini
 ```
 
-This writes `packages/scheinwerk.json` into the preferences of every Houdini version you have (on macOS `~/Library/Preferences/houdini/21.0/packages/`, on Windows `houdini21.0\packages\` in your Documents folder, also if you moved it to another drive), pointing at this checkout. Restart Houdini. If you move the repo, run it again. To remove it: `uv run sw uninstall houdini`. A `scheinwerk.json` you wrote yourself is never touched.
+This writes `packages/scheinwerk.json` into the preferences of every Houdini version you have (on macOS `~/Library/Preferences/houdini/21.0/packages/`, on Windows `houdini21.0\packages\` in your Documents folder, also if you moved it to another drive), pointing at this checkout, and at this machine's asset library if one is set up (`SW_LIBRARY` and `PXR_AR_DEFAULT_SEARCH_PATH`, see [Asset library](#asset-library-sw-lib)). Restart Houdini. If you move the repo or set up a library, run it again. To remove it: `uv run sw uninstall houdini`. A `scheinwerk.json` you wrote yourself is never touched.
 
 ### What you get
 

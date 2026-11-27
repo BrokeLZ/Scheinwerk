@@ -340,11 +340,13 @@ Location: `~/Library/Application Support/Scheinwerk/settings.json` (macOS), `%AP
     "nk":    { "name": "Nuke",    "exe": "..." },
     "blend": { "name": "Blender", "exe": "..." }
   },
-  "gui": { "last_view": "scenefiles", "geometry": null }
+  "gui": { "last_view": "scenefiles", "geometry": null },
+  "library": "/Users/lorenz/SynologyDrive/library",
+  "tools": { "hoiiotool": "/opt/oiio/bin/oiiotool" }
 }
 ```
 
-An extension with no entry opens with the OS default application. `exe` is an `.app` bundle on macOS and an executable on Windows.
+An extension with no entry opens with the OS default application. `exe` is an `.app` bundle on macOS and an executable on Windows. `library` is this machine's asset library root, or `null` (§17.2); `tools` overrides where the library's external tools are found (§17.2), empty by default.
 
 Missing keys are filled from these defaults when reading; a missing or broken file reads as the defaults. `recent_projects` holds at most 10 entries, newest first. The GUI writes `last_view` and `geometry` (`[x, y, w, h]`) when its window closes. The folder also holds user hooks (§14).
 
@@ -729,7 +731,8 @@ sw gui [path]                               # Phase 3
   - `conflict copy`: any file or folder whose name contains `Conflict` (Synology);
   - `absolute path`: the first drive letter, `/Users/`, `/Volumes/` or UNC path in each `.usd`, `.usda` and `.nk` file (`cache/` is skipped);
   - `empty version`: version folders with no files besides `version.json`;
-  - `unpublished reference`: the first path through a `work/` or `cache/` folder in each `.usd` and `.usda` file under `publish/` (a published layer may only reference published files, §9.2 item 6). `work` and `cache` are reserved names, so such a path segment always means a task folder.
+  - `unpublished reference`: the first path through a `work/` or `cache/` folder in each `.usd` and `.usda` file under `publish/` (a published layer may only reference published files, §9.2 item 6). `work` and `cache` are reserved names, so such a path segment always means a task folder;
+  - `missing library item`: every library version referenced in a `.usd`, `.usda` or `.nk` file (`@<type>/<item id>/v###…` or `$SW_LIBRARY/<type>/<item id>/v###…`) that isn't finalized in this machine's library, with *no library set up* when there is none (§17.8).
 
 ---
 
@@ -1183,7 +1186,7 @@ src/scheinwerk/dcc/           hython jobs: model conversion, promotion, preview 
 ### 17.10 CLI (planned)
 
 ```text
-sw lib init <folder>                                  # create a library (+ _workshop), store it in the user settings
+sw lib init <folder> [--name N]                       # create a library (+ _workshop), store it in the user settings
 sw lib ls [type] [--category c] [--tag t] [--search text]
 sw lib new <type> "<name>"                            # new asset in the workshop, named after the future item id
 sw lib workshop <item>                                # Open in workshop: workshop asset + originals as product `source`
@@ -1198,7 +1201,7 @@ sw lib gui                                           # the library browser (§17
 sw lib path <item> [--version N] [--variant V] [--usd] [--env]   # library-relative (or $SW_LIBRARY) path to paste
 ```
 
-Items are named by id; a display name works too when it is unique, otherwise the matches are listed. An ingest plan is the JSON form of one ingest entry (§17.11): everything detection decided, after any edits; detection and ingest are separate core calls, so the GUI only edits plans.
+`sw lib init` on a folder that already is a library (e.g. synced from another machine) changes nothing in it: it only creates a missing `_workshop` and stores the setting. It refuses a folder inside a project. Items are named by id; a display name works too when it is unique, otherwise the matches are listed. An ingest plan is the JSON form of one ingest entry (§17.11): everything detection decided, after any edits; detection and ingest are separate core calls, so the GUI only edits plans.
 
 ### 17.11 GUI (planned)
 

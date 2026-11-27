@@ -55,21 +55,30 @@ def _ours(path: Path) -> bool:
     return any(isinstance(e, dict) and MARKER in e for e in data.get("env", []))
 
 
-def package_data(repo: Path) -> dict:
-    """The package template with SCHEINWERK pointing at `repo`."""
+def package_data(repo: Path, library: Path | None = None) -> dict:
+    """The package template with SCHEINWERK pointing at `repo`, plus `SW_LIBRARY` and
+    `PXR_AR_DEFAULT_SEARCH_PATH` when a library is set up (spec §17.2). The search path is a
+    plain value: a package "prepend" would replace a value set outside Houdini anyway."""
     data = read_json(repo / TEMPLATE)
     if data is None:
         raise NotFound(f"{repo / TEMPLATE} is missing: run this from a Scheinwerk checkout.")
     data["env"] = [{MARKER: repo.as_posix()} if MARKER in e else e for e in data["env"]]
+    if library is not None:
+        root = Path(library).absolute().as_posix()
+        data["env"] += [{"SW_LIBRARY": root}, {"PXR_AR_DEFAULT_SEARCH_PATH": root}]
     return data
 
 
 def install_houdini(
-    repo: Path, home: Path | None = None, platform: str = sys.platform
+    repo: Path,
+    home: Path | None = None,
+    platform: str = sys.platform,
+    library: Path | None = None,
 ) -> list[Path]:
     """Write packages/scheinwerk.json into every Houdini preference folder, pointing at
-    `repo`. All or nothing: refuses if any of them holds a scheinwerk.json we didn't write."""
-    data = package_data(repo)
+    `repo` (and at `library`, this machine's library, if any). All or nothing: refuses if any
+    of them holds a scheinwerk.json we didn't write."""
+    data = package_data(repo, library)
     dirs = houdini_pref_dirs(home, platform)
     if not dirs:
         raise NotFound("No Houdini preferences folder found. Start Houdini once, then try again.")

@@ -373,5 +373,12 @@ def test_install_and_uninstall_houdini(sw, fake_home: Path) -> None:
     assert sw("uninstall", "houdini").out == "Nothing to remove.\n"
 
 
+def test_install_houdini_with_the_library(sw, fake_home: Path, tmp_path: Path) -> None:
+    assert sw("lib", "init", tmp_path / "library").code == 0
+    assert sw("install", "houdini").code == 0
+    env = json.loads((fake_home / "packages/scheinwerk.json").read_text(encoding="utf-8"))["env"]
+    assert {"SW_LIBRARY": (tmp_path / "library").as_posix()} in env
+
+
 def test_install_unknown_dcc(sw) -> None:
     assert sw("install", "maya").code == 2

@@ -11,7 +11,14 @@ from scheinwerk.core.errors import InvalidName
 from scheinwerk.core.project import Project
 from scheinwerk.core.templates import validate_name
 
-KINDS = ("invalid name", "conflict copy", "absolute path", "empty version", "unpublished reference")
+KINDS = (
+    "invalid name",
+    "conflict copy",
+    "absolute path",
+    "empty version",
+    "unpublished reference",
+    "missing library item",
+)
 CHECKED_SUFFIXES = (".usd", ".usda", ".nk")
 USD_SUFFIXES = (".usd", ".usda")
 
@@ -26,6 +33,12 @@ _ABSOLUTE = re.compile(
 _UNPUBLISHED = re.compile(rb"[/\\](?:work|cache)[/\\][^\x00-\x20\"'@\]\)<>|]{0,200}")
 _PATH_BEFORE = re.compile(rb"[^\x00-\x20\"'@\[\(<>|=]{0,200}$")
 _CHUNK = 1024 * 1024
+# A library-relative path (`@model/<item id>/v004/…`, resolved through the search path) or a
+# `$SW_LIBRARY/…` one (spec §17.8): <type>/<item id>/v###. Project paths in USD always start
+# with ./ or ../, so they never match.
+_LIBRARY_REF = re.compile(
+    rb"(?:@|\$SW_LIBRARY/)([a-z0-9_]+/[a-z0-9][a-z0-9_]*_[a-z0-9]{6}/v[0-9]{3,})(?![0-9A-Za-z_])"
+)
 
 
 @dataclass(frozen=True)
@@ -35,13 +48,15 @@ class Issue:
     detail: str = ""
 
 
-def check(project: Project) -> list[Issue]:
+def check(project: Project, library: Path | None = None) -> list[Issue]:
+    """`library`: this machine's library root (user setting), for library references."""
     issues = [
         *_invalid_names(project),
         *_conflict_copies(project),
         *_absolute_paths(project),
         *_empty_versions(project),
         *_unpublished_references(project),
+        *_missing_library_items(project, library),
     ]
     return sorted(issues, key=lambda i: (KINDS.index(i.kind), i.path.as_posix()))
 
@@ -99,6 +114,28 @@ def _unpublished_references(project: Project) -> Iterator[Issue]:
             found = _find(entry, _UNPUBLISHED, before=_PATH_BEFORE)
             if found is not None:
                 yield Issue("unpublished reference", entry, found)
+
+
+def _missing_library_items(project: Project, library: Path | None) -> Iterator[Issue]:
+    """References to library versions that aren't finalized on this machine."""
+    for entry in _walk(project, project.root):
+        if entry.suffix in CHECKED_SUFFIXES and entry.is_file():
+            for ref in sorted(_find_all(entry, _LIBRARY_REF)):
+                if library is None:
+                    yield Issue("missing library item", entry, f"{ref} (no library set up)")
+                elif not (library / ref / "version.json").is_file():
+                    yield Issue("missing library item", entry, ref)
+
+
+def _find_all(path: Path, pattern: re.Pattern[bytes]) -> set[str]:
+    """Every distinct first group of `pattern` in the file, read in overlapping chunks."""
+    found, carry = set(), b""
+    with path.open("rb") as f:
+        while chunk := f.read(_CHUNK):
+            buffer = carry + chunk
+            found.update(m[1].decode("latin-1") for m in pattern.finditer(buffer))
+            carry = buffer[-512:]
+    return found
 
 
 def _find(
