@@ -6,7 +6,7 @@ Scheinwerk is a lightweight, file-based VFX pipeline for one artist (macOS + Win
 
 ## Current phase
 
-> Phase 4 — Houdini (see spec §16). Phases 1 (Core), 2 (CLI) and 3 (GUI) are done. Update this line when a phase is done.
+> Phase 5 — Asset library, step L0: spike (see spec §17.12). Phases 1 (Core), 2 (CLI) and 3 (GUI) are done; Phase 4 (Houdini) is parked (spec §16). Update this line when a step or phase is done.
 
 Work on one phase at a time. Don't build ahead (no GUI code during the core phase, no Houdini code during the GUI phase).
 
@@ -26,6 +26,7 @@ uv run scheinwerk-gui        # GUI
 
 ```text
 src/scheinwerk/core/   stdlib only: templates, project, context, entities, versions, publish, env, hooks, usd_pointer, fileio, doctor, settings, system, install, errors
+src/scheinwerk/library/   asset library (spec §17), stdlib only, never imports project/context/entities
 src/scheinwerk/cli.py  argparse `sw` command
 src/scheinwerk/gui/    PySide6 widgets, actions, theme.qss
 src/scheinwerk/dcc/    adapters (houdini, nuke, blender)
@@ -39,7 +40,7 @@ Dependency direction: `core` ← `cli` ← `gui` ← `dcc`. Never the other way 
 
 ## Non-negotiable rules
 
-1. **`core/` imports only the Python standard library.** No Qt, no `hou`/`nuke`/`bpy`, no `pxr`, no third-party packages. A test enforces this.
+1. **`core/` and `library/` import only the Python standard library.** No Qt, no `hou`/`nuke`/`bpy`, no `pxr`, no third-party packages. A test enforces this.
 2. **Never persist an absolute path inside a project.** Stored paths (JSON, generated USD, anything written to disk) are root-relative POSIX strings with `/`, or file-relative (USD), or env-relative (`$SW_ROOT/...`). Absolute paths are allowed only at runtime and in machine-local user settings. Published files reference only other published files (never `work/` or `cache/`), and every USD layer core writes carries the entity's fps (spec §9.2).
 3. **The folder tree is the truth.** Don't cache tree state, don't add registries or indexes, don't add JSON fields the spec doesn't define. Rescan instead.
 4. **Context comes from the path.** Use `Context.from_path()`. Never pass state around that the path could provide, and never trust filename prefixes for context (folders only).
@@ -55,7 +56,7 @@ Dependency direction: `core` ← `cli` ← `gui` ← `dcc`. Never the other way 
 - Small modules, plain functions and frozen dataclasses. No class hierarchies, metaclasses, plugin frameworks or event buses.
 - Type hints everywhere (`from __future__ import annotations`). Docstrings only where the *why* isn't obvious.
 - Core raises `ScheinwerkError` subclasses with user-readable messages. It never prints, logs to stdout, or calls `sys.exit`. The CLI and GUI turn errors into output.
-- The GUI holds no logic: every menu action is one core call. All actions live in right-click menus built from `gui/actions.py`. No button rows.
+- The GUI holds no logic: every menu action is one core call. All actions live in right-click menus built from `gui/actions.py`. No button rows (exception: the library browser's Ingest view, spec §17.11).
 - No hard-coded colours or fonts in widget code. Everything goes in `gui/theme.qss`.
 - Prefer fewer lines over clever abstractions. If something needs a new concept, ask first.
 
