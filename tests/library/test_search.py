@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from scheinwerk.library.root import Library
-from scheinwerk.library.search import category_counts, search, tag_counts
+from scheinwerk.library.search import category_counts, known_values, search, tag_counts
 from tests.library.conftest import make_item
 
 MAIN = {"variants": {"main": {"version": 1}}}
@@ -126,6 +126,17 @@ def test_category_counts_include_parents(stocked: Library) -> None:
 
 def test_tag_counts(stocked: Library) -> None:
     assert tag_counts(search(stocked, type_="texture_set")) == {"clean": 1, "rust": 1, "worn": 1}
+
+
+def test_known_values_most_used_first(stocked: Library) -> None:
+    make_item(stocked, "hdri", "dusk_m4n5o6", {1: MAIN}, credits="Poly Haven", tags=["sun"])
+    make_item(stocked, "hdri", "noon_p7q8r9", {1: MAIN}, credits="Poly Haven", license="CC0")
+    known = known_values(search(stocked))
+    assert known["categories"][:2] == ["metal", "architecture"]  # metal: 2 items, then by name
+    assert "metal/painted" in known["categories"] and "sky/clear" in known["categories"]
+    assert known["tags"] == ["sun", "clean", "rust", "tree", "worn"]
+    assert known["credits"] == ["Poly Haven", "ambientCG"]
+    assert known["license"] == ["CC0"]
 
 
 def test_filters_from_version_json(lib: Library) -> None:

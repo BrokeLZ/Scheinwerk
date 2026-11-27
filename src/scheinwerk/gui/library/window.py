@@ -121,7 +121,12 @@ class LibraryBrowser(QWidget):
         top.addWidget(reload)
 
         self.browse = BrowseView(library, self.queue)
-        self.ingest = IngestView(self.queue, spaces, lambda: [i.id for i in library.items()])
+        self.ingest = IngestView(
+            self.queue,
+            spaces,
+            lambda: [i.id for i in library.items()],
+            known=lambda: self.browse.known,
+        )
         self.browse.ingestRequested.connect(self.ingest_paths)
         self.ingest.showItem.connect(self.show_item)
         self.ingest.ingested.connect(lambda: self.browse.reload())

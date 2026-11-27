@@ -84,3 +84,22 @@ def category_counts(items: list[Item]) -> dict[str, int]:
 def tag_counts(items: list[Item]) -> dict[str, int]:
     counts: Counter[str] = Counter(t for item in items for t in set(item.tags))
     return dict(sorted(counts.items()))
+
+
+def known_values(items: list[Item]) -> dict[str, list[str]]:
+    """The categories (parents included), tags, credits and licenses already in use, most
+    used first, then by name: what the metadata fields suggest while typing."""
+
+    def ranked(counts: Counter[str]) -> list[str]:
+        return [v for v, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].casefold()))]
+
+    def text(item: Item, key: str) -> list[str]:
+        value = str(item.meta.get(key) or "").strip()
+        return [value] if value else []
+
+    return {
+        "categories": ranked(Counter(category_counts(items))),
+        "tags": ranked(Counter(tag_counts(items))),
+        "credits": ranked(Counter(v for i in items for v in text(i, "credits"))),
+        "license": ranked(Counter(v for i in items for v in text(i, "license"))),
+    }

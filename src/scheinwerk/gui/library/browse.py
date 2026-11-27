@@ -36,11 +36,12 @@ from PySide6.QtWidgets import (
 
 from scheinwerk.core.errors import ScheinwerkError
 from scheinwerk.core.system import reveal
+from scheinwerk.gui.library.complete import suggest
 from scheinwerk.gui.library.jobs import JobQueue
 from scheinwerk.library.ids import DEFAULT_VARIANT
 from scheinwerk.library.items import Item, update_meta
 from scheinwerk.library.root import Library
-from scheinwerk.library.search import category_counts, search, tag_counts
+from scheinwerk.library.search import category_counts, known_values, search, tag_counts
 
 TYPES = [
     ("All", None),
@@ -115,6 +116,7 @@ class BrowseView(QWidget):
         self.queue = queue
         self.text = ""
         self.items: list[Item] = []
+        self.known: dict[str, list[str]] = {}  # values in use, suggested while typing
         self._pending: list[QListWidgetItem] = []
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._load_some_thumbnails)
@@ -227,6 +229,7 @@ class BrowseView(QWidget):
         keep = select or self._selected_key()
         try:
             of_type = search(self.library, self._type())
+            self.known = known_values(search(self.library))
             self.items = search(
                 self.library,
                 self._type(),
@@ -433,23 +436,20 @@ class BrowseView(QWidget):
             if new != old:
                 save(**{f"add_{key}": new, f"remove_{key}": [o for o in old if o not in new]})
 
-        form.addRow(
-            "Categories", line(", ".join(item.categories), lambda t: set_list("categories", t))
-        )
-        form.addRow("Tags", line(", ".join(item.tags), lambda t: set_list("tags", t)))
+        for key, label in (("categories", "Categories"), ("tags", "Tags")):
+            edit = line(", ".join(getattr(item, key)), lambda t, k=key: set_list(k, t))
+            form.addRow(label, suggest(edit, self.known.get(key, []), is_list=True))
         for key, label in (
             ("description", "Description"),
             ("credits", "Credits"),
             ("license", "License"),
             ("source_url", "Source URL"),
         ):
-            form.addRow(
-                label,
-                line(
-                    str(meta.get(key) or ""),
-                    lambda t, k=key: t != (meta.get(k) or "") and save(fields={k: t}),
-                ),
+            edit = line(
+                str(meta.get(key) or ""),
+                lambda t, k=key: t != (meta.get(k) or "") and save(fields={k: t}),
             )
+            form.addRow(label, suggest(edit, self.known.get(key, [])))
         if item.type in ("texture", "texture_set"):
             form.addRow("Size (m)", self._size(item, meta, save))
             form.addRow("Displacement", self._displacement(meta, save))

@@ -217,6 +217,37 @@ def test_ingest_all_skips_needs_input_and_done(window: LibraryBrowser, tmp_path:
     assert len([j for j in window.queue.jobs if j.args[1] == "ingest"]) == 1
 
 
+def suggestions(edit: QLineEdit) -> list[str]:
+    c = edit.completer()
+    c.setCompletionPrefix(c.splitPath(edit.text())[0])
+    m = c.completionModel()
+    return [m.index(i, 0).data() for i in range(m.rowCount())]
+
+
+def test_metadata_fields_suggest_values_in_use(window: LibraryBrowser, tmp_path: Path) -> None:
+    view = window.ingest
+    view.add_plans(plan(tmp_path)["entries"])
+    edits = view.detail.widget().findChildren(QLineEdit)
+    categories, tags = (next(e for e in edits if e.placeholderText() == h)
+                        for h in ("metal/painted, architecture", "rust, worn"))  # fmt: skip
+    categories.setText("sk")
+    assert suggestions(categories) == ["sky"]
+    categories.setText("sky, PAINT")  # only the last list item, any case, inside words
+    assert suggestions(categories) == ["metal/painted"]
+    c = categories.completer()
+    chosen = c.completionModel().mapToSource(c.completionModel().index(0, 0))
+    assert c.pathFromIndex(chosen) == "sky, metal/painted"
+    categories.setText("sky, metal/painted")
+    c.activated.emit("metal/painted")  # choosing a suggestion counts as an edit
+    assert view.entries[0].plan["categories"] == ["sky", "metal/painted"]
+    tags.setText("s")
+    assert suggestions(tags) == ["rust", "sun"]
+    window.browse.select("texture_set/rust_a1b2c3")
+    browse_tags = window.browse.detail.widget().findChildren(QLineEdit)[2]
+    browse_tags.setText("rust, su")
+    assert suggestions(browse_tags) == ["sun"]
+
+
 def test_clear_done_and_clear_all(window: LibraryBrowser, tmp_path: Path) -> None:
     view = window.ingest
     plans = plan(tmp_path)["entries"]

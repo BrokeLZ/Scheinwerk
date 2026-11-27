@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scheinwerk.gui.library.complete import suggest
 from scheinwerk.gui.library.jobs import Job, JobQueue
 
 SET_ROLES = [
@@ -107,13 +108,19 @@ class IngestView(QWidget):
     ingested = Signal()  # an entry finished: Browse should reload
 
     def __init__(
-        self, queue: JobQueue, spaces: list[str], item_ids: callable, parent: QWidget | None = None
+        self,
+        queue: JobQueue,
+        spaces: list[str],
+        item_ids: callable,
+        parent: QWidget | None = None,
+        known: callable = dict,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("ingestView")
         self.queue = queue
         self.spaces = spaces
         self.item_ids = item_ids
+        self.known = known  # () -> values in use, for suggestions (library.search.known_values)
         self.entries: list[Entry] = []
         self.unused: list[dict] = []
         self.detecting = 0
@@ -367,10 +374,14 @@ class IngestView(QWidget):
         ):
             form.addRow(
                 label,
-                self._line(
-                    ", ".join(plan.get(key) or []),
-                    lambda t, k=key: plan.update({k: _split(t)}),
-                    hint,
+                suggest(
+                    self._line(
+                        ", ".join(plan.get(key) or []),
+                        lambda t, k=key: plan.update({k: _split(t)}),
+                        hint,
+                    ),
+                    self.known().get(key, []),
+                    is_list=True,
                 ),
             )
         for key, label in (
@@ -378,9 +389,8 @@ class IngestView(QWidget):
             ("license", "License"),
             ("source_url", "Source URL"),
         ):
-            form.addRow(
-                label, self._line(plan.get(key) or "", lambda t, k=key: plan.update({k: t}))
-            )
+            edit = self._line(plan.get(key) or "", lambda t, k=key: plan.update({k: t}))
+            form.addRow(label, suggest(edit, self.known().get(key, [])))
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -617,10 +627,14 @@ class IngestView(QWidget):
             current = first(key)
             form.addRow(
                 label,
-                self._line(
-                    ", ".join(current or []),
-                    lambda t, k=key: [e.plan.update({k: _split(t)}) for e in entries],
-                    "different" if current is None else "",
+                suggest(
+                    self._line(
+                        ", ".join(current or []),
+                        lambda t, k=key: [e.plan.update({k: _split(t)}) for e in entries],
+                        "different" if current is None else "",
+                    ),
+                    self.known().get(key, []),
+                    is_list=True,
                 ),
             )
         for key, label in (
@@ -631,10 +645,13 @@ class IngestView(QWidget):
             current = first(key)
             form.addRow(
                 label,
-                self._line(
-                    current or "",
-                    lambda t, k=key: [e.plan.update({k: t}) for e in entries],
-                    "different" if current is None else "",
+                suggest(
+                    self._line(
+                        current or "",
+                        lambda t, k=key: [e.plan.update({k: t}) for e in entries],
+                        "different" if current is None else "",
+                    ),
+                    self.known().get(key, []),
                 ),
             )
         go = QPushButton("Ingest selected")

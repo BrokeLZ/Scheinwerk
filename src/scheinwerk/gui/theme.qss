@@ -166,6 +166,15 @@ QListWidget#typeList::item:selected, QListWidget#tagList::item:selected {
     color: #fbe3d3;
 }
 
+QListView#suggestions {
+    background: #efc3a6;
+    color: #3b2314;
+    border: 1px solid #a8380a;
+    outline: none;
+    selection-background-color: #a8380a;
+    selection-color: #fbe3d3;
+}
+
 QScrollArea#entryDetail, QScrollArea#itemDetail { background: #efc3a6; border: none; }
 #entryPanel, #itemPanel { background: #efc3a6; }
 #entryPanel QLabel, #itemPanel QLabel { color: #3b2314; }
