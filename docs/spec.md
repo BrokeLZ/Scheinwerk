@@ -1096,6 +1096,7 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
 - `variants` (required for a finalized version): every variant the version offers, each with the version whose folder holds its files (this one or an earlier one). `files`, `source/`, `sha256` and the recipe fields describe only the variants whose files are in this version.
 - `origin`: `ingest`, `promote` or `rebuild`.
 - `source_version`: set when the originals of this version's files live in an earlier version's `source/` (a rebuild with unchanged originals copies nothing; that earlier version is never deleted).
+- `files`: one entry per output map (a UDIM map once, with `<UDIM>` in `source` and `output`). Its paths are relative to this version's folder, so after a rebuild they point into the earlier version (`../v001/source/…`). `role` is a texture-set role, `hdri`, or for a single texture `color` or `data`. `channel` (only on maps unpacked from a packed `arm`/`orm` file): the source channel the map is taken from. Originals sit in `source/`, or in `source/<variant>/` when the version holds several variants' files.
 - `promoted_from`: project name, the asset's root-relative path, and the published layer or product versions it was made from (no absolute paths).
 - `workflow`: `metal_rough` or `spec_gloss`, the workflow of the originals; `metal_threshold` only for `spec_gloss` (§17.5).
 - `scale` (ingested models only, else `null`): the factor applied on top of the file's own units (§17.6), `1` when it wasn't changed.
@@ -1109,19 +1110,23 @@ The texture processor is a project-free core module, shared by the library and, 
 - **Tools.** It runs `hoiiotool` (OpenImageIO's `oiiotool` as shipped with Houdini 21: OIIO 2.5, OCIO 2.4, found as in §17.2) as a subprocess, one call per output file. Everything below is one `hoiiotool` command line: `--colorconvert`, `-d`, `-otex`/`-oenv`, `--invert`, arithmetic (`--maxchan`, `--subc`, `--mul`, …), `--stats`. `imaketx` is not used: it can't set the output data type and writes colour-converted maps as 8-bit. The core stays stdlib-only; nothing is pip-installed. The tool's version is recorded in `version.json` (`tools`).
 - **Output.** Every texture becomes a tiled, mipmapped map (Karma CPU and XPU read its MIP levels): OpenEXR (`.exr`) for half and float data, TIFF (`.tx`) for 8- and 16-bit data (§17.3). TIFF has no half type (`-d half -otex x.tx` silently writes float), hence two containers. HDRIs are written as lat-long environment maps (`-oenv`). Originals are kept at their full resolution; there is no downsizing (the mipmaps cover smaller sizes).
 - **Colour roles** (`hdri`, a colour `texture`, `basecolor`, `emission`): converted from their source colour space to `working_space` with the machine's OCIO config, written as **half float**. An HDRI whose peak value (read with `hoiiotool --stats`) exceeds the half-float maximum (65504, e.g. an unclipped sun) is written as float: `hoiiotool` clamps half output to 65504, which would take energy out of the sun.
-- **Data roles** (`normal`, `roughness`, `metalness`, `specular_level`, `height`, `ao`, `opacity`, and a data `texture`): no colour conversion, tagged `raw`, bit depth kept (8/16-bit integer stays integer in a `.tx`, float stays float in an `.exr`).
+- **Data roles** (`normal`, `roughness`, `metalness`, `specular_level`, `height`, `ao`, `opacity`, and a data `texture`): no colour conversion, tagged `raw`, bit depth kept (8/16-bit integer stays integer in a `.tx`, float stays float in an `.exr`). Single-value roles keep one channel (the first, or the one a packed map names); normal maps three; a data texture all of its channels.
+- **Packed maps** (Poly Haven `arm`, Unreal-style `orm`: AO in R, roughness in G, metalness in B) are unpacked by channel into the roles the set doesn't have as separate files; a packed file that adds nothing is skipped.
 - **Normal maps** are stored OpenGL-style (+Y). DirectX sources get their green channel flipped (`flip_green`).
 - **Gloss maps** become roughness (`invert`: 1 − value).
 - **Specular/gloss sets are converted to metal/rough** (`workflow: spec_gloss`), so every `texture_set` has the same roles. This is an approximation, not an exact conversion: `roughness` = 1 − gloss (exact); `metalness` from the specular map, 0 at the ~4 % reflectance of non-metals rising to 1 at `metal_threshold` (default 0.2, linear); `basecolor` = diffuse blended towards the specular colour by metalness. The originals stay in `source/`, so a version can be rebuilt with another threshold; the preview (§17.7) shows the result. `hoiiotool` does the per-pixel maths in one command line; specular and diffuse are linearised first.
 - **UDIMs:** tiles named `<name>.<UDIM>.<ext>` (1001…) are processed one `hoiiotool` call per tile (its own `<UDIM>` handling crashes) and keep their numbers; USD uses the `<UDIM>` token.
-- **Detection** (shown per entry in the Ingest view, §17.11, every value can be changed, all recorded in `version.json`):
-  - Item type from what is dropped: one float image with a 2:1 aspect → `hdri`; several images where at least two have known roles → `texture_set`; one image → `texture`; `fbx`, `obj`, `gltf`, `glb`, `abc`, `usd`, `usda`, `usdc`, `usdz` → `model`. Zip files are extracted to a temporary folder first. Anything ambiguous is asked. Images `hoiiotool` can't read (webp, jxl, heif, jp2, …) are listed as unsupported.
-  - Variants from tokens `var<n>`/`variation<n>` (Megascans plants: `var1`…`var12` → variants `var01`…`var12`); everything else is `main`. Ingesting into an existing item as a new or changed variant is chosen per entry (`--item`, `--variant`).
-  - Role from filename tokens, case-insensitive: `basecolor`/`albedo`/`col`/`color` → `basecolor`; `diffuse`/`diff` → `diffuse` (spec/gloss); `normal`/`nrm`/`nor` → `normal`; `rough` → `roughness`; `gloss` → `glossiness`; `metal` → `metalness`; `spec` → `specular` (spec/gloss) or `specular_level` (metal/rough); `disp`/`height` → `height`; `ao`/`occlusion` → `ao`; `opacity`/`alpha`/`mask` → `opacity`; `emissive`/`emission` → `emission`. Unknown files are listed and can be assigned or skipped.
-  - Workflow: a set with `diffuse`, `specular` or `glossiness` and no `metalness` is `spec_gloss` (asked to confirm), otherwise `metal_rough`.
-  - Normal convention from tokens (`gl`, `dx`, `opengl`, `directx`); without one the GUI asks, the CLI assumes OpenGL and warns.
-  - Source colour space: integer colour images → the config's sRGB texture space; float images → linear Rec.709. Single textures: one channel → data, otherwise colour.
-- **Display names** are suggested from the file or folder name, stripped of resolution and variant tokens (`Rusty_Metal_02_4K` → `Rusty Metal 02`).
+- **Detection** (`sw lib detect`; shown per entry in the Ingest view, §17.11; every value can be changed, all recorded in `version.json`). The cases are in `tests/library/test_detect.py`.
+  - **Tokens.** File names are split on `_`, `-`, `.`, spaces and lower→upper case changes (`NormalGL` → `Normal`, `GL`) and matched ignoring case, as whole tokens (`Metal032` is not `metal`, `collection` is not `col`). Resolution (`4k`, `4096`), format (`jpg`, `png`, `exr`, …), `lod<n>` and variant tokens are not part of the name.
+  - **Role**, from the **last** role token in the name (download sites put the role after the name: `rusty_metal_02_diff_4k` is `diffuse`): `basecolor`/`base`+`color`/`albedo`/`col`/`color`/`colour` → `basecolor`; `diffuse`/`diff` → `diffuse`; `normal`/`nrm`/`nor`/`norm` → `normal`; `rough`/`roughness` → `roughness`; `gloss`/`glossiness` → `glossiness`; `metal`/`metallic`/`metalness` → `metalness`; `spec`/`specular` → `specular`; `disp`/`displacement`/`height` → `height`; `ao`/`occlusion`/`ambient`+`occlusion` → `ao`; `opacity`/`alpha`/`mask` → `opacity`; `emissive`/`emission` → `emission`; `arm`, `orm` → packed. The tokens before the role (minus the ignored ones) are the map's *base name*.
+  - **Normal convention** from `gl`/`opengl`/`dx`/`directx` anywhere in the name; DX gets `flip_green`. Without one the GUI asks; the CLI assumes OpenGL and says so in the entry.
+  - **Entries.** Every folder is looked at on its own (subfolders recursively); zips are extracted once into the machine-local `unzipped/` folder next to the user settings (§8.4) and read like a folder; loose files dropped together are one group. In a folder, images with the same base name form a map set; UDIM tiles (`name.1001.ext`) are one map. A set with at least two different roles → `texture_set`. Other images → one entry each: a float image with a 2:1 aspect → `hdri`, else `texture` (one channel → data, else colour). Variant tokens `var<n>`/`variation<n>`, in the name or as a subfolder (`Var1/`), merge otherwise equal maps into one entry with variants `var01`, `var02`, …; everything else is `main`.
+  - **One map per role and variant:** a GL normal map before an unmarked one before a DX one; then the highest resolution; then `.exr`, `.tif`, `.png`, `.tga`, `.jpg`. The others are listed as *skipped*.
+  - **Workflow.** A set is `spec_gloss` only when it has `specular` or `glossiness` and neither `metalness` nor `roughness` (status *warning*, metal threshold 0.2). Otherwise it is `metal_rough`: a `diffuse` map is its `basecolor` (download sites such as Poly Haven name it `diff`), `specular` is `specular_level`, and `glossiness` becomes `roughness` (`invert`).
+  - **Source colour space:** colour maps (`basecolor`, `diffuse`, `specular`, `emission`, a colour texture, an HDRI) → the config's sRGB texture space when integer, linear Rec.709 when float; everything else `raw`.
+  - **Leftovers.** Images without a role, other files (`.mtlx`, `.txt`, previews) in a folder with exactly one set are that set's *skipped* files; otherwise they are listed as *not used*, like models (until step L4), images `hoiiotool` can't read (webp, jxl, heif, jp2, avif, gif) and files that can't be read. Ingesting into an existing item, as a new version or one new or changed variant, is chosen per entry (`--item`, `--variant`).
+  - **Duplicates:** an entry whose files have the `sha256` of originals already in the library gets status *warning*, naming the item and version.
+- **Display names** are suggested from the base name, without resolution, format and variant tokens, each lowercase word capitalised (`Rusty_Metal_02_4K` → `Rusty Metal 02`, `Metal032_4K-JPG` → `Metal032`).
 
 ### 17.6 Models and promotion
 
@@ -1139,7 +1144,7 @@ The texture processor is a project-free core module, shared by the library and, 
 
 ### 17.7 Previews
 
-- Every variant has a thumbnail, `thumb_{var}.jpg` in the version that holds its files, through the OCIO config's default display with the view `ACES 1.0 - SDR Video` when the config has it (it tone-maps, so HDRIs don't clip), else the default view: 512 × 512 for models and texture sets, 1024 × 512 for HDRIs, the image's aspect within 512 px for textures. The grid shows `main`'s.
+- Every variant has a thumbnail, `thumb_{var}.jpg` in the version that holds its files, through the OCIO config's default display with the view `ACES 1.0 - SDR Video` when the config has it (it tone-maps, so HDRIs don't clip), else the default view: 512 × 512 for models and texture sets, 1024 × 512 for HDRIs, the image's aspect within 512 px for textures (never enlarged). A data texture is shown as it is, without the display view. The grid shows `main`'s.
 - Karma renders, run as husk/hython jobs after the version's files are written:
   - `model`: the component with that variant selected, in a fixed preview scene (neutral studio lighting, camera framing the bounds);
   - `texture_set`: a shader ball with a MaterialX material that loads the set like `sw_texture_set` (§17.8, same network, triplanar at `size_m`) into the preview scene's own surface shader.
@@ -1191,17 +1196,50 @@ sw lib ls [type] [--category c] [--tag t] [--search text]
 sw lib new <type> "<name>"                            # new asset in the workshop, named after the future item id
 sw lib workshop <item>                                # Open in workshop: workshop asset + originals as product `source`
 sw lib detect <files|folder|zip…> [--json]           # print the ingest plans detection makes (§17.5), writes nothing
-sw lib ingest <files|folder|zip…> [--type T] [--name N] [--item <id>] [--variant V] [--scale X] [--category c…] [--tag t…] [--yes]
-sw lib ingest --plan <plan.json>                     # run one plan as printed by detect (edited by hand or the GUI)
+sw lib ingest <files|folder|zip…> [--type hdri|texture] [--name N] [--item <id>] [--variant V] [--size W H] [--scale X] [--category c…] [--tag t…] [-m C] [--yes]
+sw lib ingest --plan <plan.json>                     # run the plan(s) in a file: one plan, or detect's whole --json output
 sw lib promote <asset> [--item <id>] [--variant V] [--product P]   # inside a project: new library version
 sw lib meta <item> [--name N] [--add-category c] [--remove-category c] [--add-tag t] [--remove-tag t]
-sw lib rebuild <item> [--version N] [--metal-threshold X]   # new version from the same originals
+sw lib rebuild <item> [--version N] [--metal-threshold X] [-m C]   # new version from the same originals
 sw lib thumb <item> [--version N] [--variant V]       # render or make the preview again
 sw lib gui                                           # the library browser (§17.11)
 sw lib path <item> [--version N] [--variant V] [--usd] [--env]   # library-relative (or $SW_LIBRARY) path to paste
 ```
 
-`sw lib init` on a folder that already is a library (e.g. synced from another machine) changes nothing in it: it only creates a missing `_workshop` and stores the setting. It refuses a folder inside a project. Items are named by id; a display name works too when it is unique, otherwise the matches are listed. An ingest plan is the JSON form of one ingest entry (§17.11): everything detection decided, after any edits; detection and ingest are separate core calls, so the GUI only edits plans.
+`sw lib init` on a folder that already is a library (e.g. synced from another machine) changes nothing in it: it only creates a missing `_workshop` and stores the setting. It refuses a folder inside a project. Items are named by id; a display name works too when it is unique, otherwise the matches are listed. An ingest plan is the JSON form of one ingest entry (§17.11): everything detection decided, after any edits; detection and ingest are separate core calls, so the GUI only edits plans. `--name`, `--type`, `--item` and `--variant` need exactly one entry; `--category`, `--tag`, `--size` and `--scale` apply to every entry. Entries with status *needs input* are refused, ones with *warning* need `--yes`; everything is checked before the first entry is ingested, and an entry that fails doesn't stop the others.
+
+Plan (runtime data, never stored in the library, so absolute paths are fine):
+
+```json
+{
+  "schema": 1,
+  "type": "texture_set",
+  "name": "Rusty Metal 02",
+  "target": { "item": null, "variant": null },
+  "variants": {
+    "main": [
+      { "path": "/Users/me/Downloads/rusty_metal_02_diff_4k.jpg", "role": "basecolor",
+        "color_space": "sRGB - Texture", "flip_green": false, "invert": false, "channel": null },
+      { "path": "/Users/me/Downloads/rusty_metal_02_arm_4k.jpg", "role": "roughness",
+        "color_space": "raw", "flip_green": false, "invert": false, "channel": 1 }
+    ]
+  },
+  "skipped": ["/Users/me/Downloads/rusty_metal_02.blend"],
+  "workflow": "metal_rough",
+  "metal_threshold": null,
+  "size_m": null,
+  "displacement": null,
+  "scale": null,
+  "categories": [], "tags": [], "credits": "", "license": "", "source_url": "",
+  "status": "ready",
+  "messages": []
+}
+```
+
+- `target.item`: null for a new item, else the item that gets a new version. `target.variant`: the one variant the plan's files become (the item's other variants are kept); null keeps the plan's variant names.
+- `variants`: per variant the source files with their role (texture sets: also the source roles `diffuse`, `specular`, `glossiness` of a spec/gloss set), source colour space, `flip_green`, `invert` and `channel`. A UDIM map's `path` is a `name.<UDIM>.ext` pattern.
+- `status`: `ready`, `warning` or `needs_input`; `messages` say why. `sw lib detect --json` prints `{"entries": [plans…], "unused": [{"path", "reason"}…]}`.
+- The metadata fields fill `item.json` of a new item; for an existing item categories and tags are added and the other fields only fill what is empty.
 
 ### 17.11 GUI (planned)
 
@@ -1259,7 +1297,7 @@ The library browser is its own window (`sw lib gui`, also a dockable panel in Ho
 | --- | --- | --- |
 | L0 — Spike | Which texture tools exist in Houdini 21 on macOS and Windows, and their flags (colour conversion, half float, lat-long, UDIM, per-pixel maths for spec/gloss); whether Karma CPU and XPU use `.tx` mipmaps and `colorSpace` metadata; `PXR_AR_DEFAULT_SEARCH_PATH` in Houdini, husk and Karma texture lookups, and the output processor leaving such paths alone; DomeLight orientation; a component whose `variant` set switches payloads across version folders, also as instancer prototypes; MaterialX image and triplanar nodes in Karma 21, normal maps under triplanar; headless hython fbx/gltf → USD; preview scene format | Done on macOS (2026-11-27): findings written into this section, scripts in `spike/l0/`. The Windows run of the same scripts is still open and may amend §17.2/§17.5 |
 | L1 — Library core | Project-free core refactor (version counting), `library.json`, workshop creation, layout and item ids, variants, `item.json`/`version.json`, scan and search, `sw lib init`/`ls`/`meta`/`path`, `doctor` additions | Tests pass on macOS and Windows CI |
-| L2 — Texture processor | Detection (incl. variants), recipes (incl. spec/gloss conversion), `.exr`/`.tx` maps and image previews, `rebuild`, `sw lib ingest` for `hdri`/`texture`/`texture_set` | 20 downloaded HDRIs and PBR sets (Poly Haven, ambientCG, one spec/gloss set, one HDRI with a sun-less variant) ingested in one batch, correct when loaded by hand in Karma |
+| L2 — Texture processor | Detection (incl. variants), recipes (incl. spec/gloss conversion), `.exr`/`.tx` maps and image previews, `rebuild`, `sw lib ingest` for `hdri`/`texture`/`texture_set` | 20 downloaded HDRIs and PBR sets (Poly Haven, ambientCG, one spec/gloss set, one HDRI with a sun-less variant) ingested in one batch, correct when loaded by hand in Karma. Texture-set previews are Karma renders and come with L4 |
 | L3 — Library GUI | Browse view (search, category tree, tags and filters, grid, detail panel with variants, metadata editing) and Ingest view (entries, per-entry editing, bulk editing, *Ingest* / *Ingest all*, background jobs) | A folder of mixed downloads is checked, corrected, ingested, categorized and found again without the CLI |
 | L4 — Models and promotion | External model ingest, normalized `textures` products for project assets, `sw lib new`/`workshop`/`promote` (models with variants, texture products), Karma previews for models and texture sets | A Megascans plant with its variations, a SpeedTree tree built in the workshop with a winter variant added later, and an asset promoted from a project each end up as a clean item with rendered previews |
 | L5 — Houdini | `sw_import_lop` with library models and variants, the DomeLight node, `sw_texture_set` HDA, *Create material from texture set*, library panel with drag and drop | A library model (with a chosen variant), an HDRI and a texture set (triplanar, uniform scale) are rendered in a shot with no typed paths |

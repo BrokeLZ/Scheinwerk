@@ -322,7 +322,7 @@ It exits with 1 when it finds anything, so it can run in scripts.
 
 ## Asset library (`sw lib`)
 
-One library per machine, shared by all projects: finished HDRIs, textures, texture sets and models, each with versions and variants. It's being built in steps ([spec §17](spec.md#17-asset-library)); so far you can set it up, list and search it, edit an item's name, categories and tags, and copy paths. Ingesting, the browser and the Houdini tools come in the next steps.
+One library per machine, shared by all projects: finished HDRIs, textures, texture sets and models, each with versions and variants. It's being built in steps ([spec §17](spec.md#17-asset-library)); so far you can set it up, ingest HDRIs, textures and texture sets, list and search it, edit an item's name, categories and tags, and copy paths. Models, Karma previews, the browser and the Houdini tools come in the next steps.
 
 ### Setting it up
 
@@ -335,6 +335,60 @@ This creates `library.json` and `_workshop/` (a normal Scheinwerk project for bu
 On another machine, where the library arrives through sync, run the same command on the synced folder: it only stores the setting and changes nothing in the library.
 
 Then run `sw install houdini` again: the package now also sets `SW_LIBRARY` and `PXR_AR_DEFAULT_SEARCH_PATH` to the library, so library paths in USD resolve in Houdini. Restart Houdini after changing the library.
+
+### Ingesting HDRIs, textures and texture sets
+
+Ingesting needs Houdini 21 installed: the maps are made with its `hoiiotool` (found automatically; another one can be set in the user settings under `tools`, [spec §17.2](spec.md#172-location-settings-workshop)).
+
+First look at what Scheinwerk makes of your downloads; this writes nothing:
+
+```console
+$ sw lib detect ~/Downloads/textures
+texture_set  Rusty Metal 02  ready
+  main  basecolor  rusty_metal_02_diff_4k.jpg  sRGB - Texture
+  main  roughness  rusty_metal_02_rough_4k.jpg  raw
+  main  normal  rusty_metal_02_nor_dx_4k.exr  raw  flip green
+  main  metalness  rusty_metal_02_arm_4k.jpg  raw  channel 2
+  skipped  rusty_metal_02.blend
+hdri  Kloppenheim 06  ready
+  main  hdri  kloppenheim_06_4k.exr  Linear Rec.709 (sRGB)
+texture_set  Brick  warning
+  main  diffuse  brick_diffuse.png  sRGB - Texture
+  …
+  ! A spec/gloss set: it is converted to metal/rough (metal threshold 0.2, an approximation). Check the preview.
+not used  photo.webp  (unsupported image format)
+```
+
+Files, folders (each folder is looked at on its own, also its subfolders) and zips all work. A folder of 20 downloaded sets gives 20 entries; Megascans `Var1/`, `Var2/` folders become variants `var01`, `var02`. Roles, normal-map convention (GL/DX), packed `arm`/`orm` maps, colour spaces and the spec/gloss workflow are read from the file names; the rules are in [spec §17.5](spec.md#175-normalization-texture-processor).
+
+Then ingest:
+
+```bash
+sw lib ingest ~/Downloads/textures --category metal/painted --tag rust --yes
+sw lib ingest sky.exr --name "Kloppenheim 06" --size 2 2
+sw lib ingest winter/ --item oak_k3f9q2 --variant winter     # a variant of an existing item
+```
+
+Each entry becomes an item (or a new version of `--item`): the originals are copied into the version's `source/`, every map is converted to a tiled, mipmapped `.exr` (colour, in the library's working space) or `.tx` (data), HDRIs and single textures get a thumbnail, and `version.json` is written last. Your files are never moved or changed.
+
+- Entries with a *warning* (a spec/gloss set, or files that were ingested before) need `--yes`.
+- `--name`, `--type hdri|texture`, `--item` and `--variant` work when there is exactly one entry; `--category`, `--tag` and `--size W H` (metres the maps cover) apply to all. `-m` adds a comment.
+- To change anything else (a role, flip green, which variant), save the plans, edit them and run them:
+
+  ```bash
+  sw lib detect ~/Downloads/rusty --json > plan.json    # edit plan.json
+  sw lib ingest --plan plan.json
+  ```
+
+- If a map fails, that item's version stays incomplete (`sw lib ls` shows `[incomplete v002]`) and the other entries still go in.
+
+### Rebuilding
+
+```bash
+sw lib rebuild "Brick" --metal-threshold 0.35
+```
+
+Makes a new version from the same originals (nothing is copied again), e.g. to try another metal threshold on a spec/gloss set. `--version N` rebuilds an older version.
 
 ### Listing and searching
 
