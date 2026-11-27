@@ -18,6 +18,7 @@ from scheinwerk.core.templates import (
     validate_name,
 )
 from scheinwerk.core.usd_pointer import read_pointer
+from scheinwerk.core.version_dirs import highest_version, next_version_dir, version_dirs
 
 if TYPE_CHECKING:
     from scheinwerk.core.project import Project
@@ -86,8 +87,7 @@ class Product:
 
     def versions(self) -> list[Version]:
         """v### folders, newest first, empty ones included."""
-        found = [Version(self.project, d) for d in self.project.scan(self.path)]
-        return sorted((v for v in found if v.number is not None), key=lambda v: -v.number)
+        return [Version(self.project, d) for d in version_dirs(self.path)]
 
     def latest(self) -> Version | None:
         """Highest version that has files in it (spec §5.4)."""
@@ -106,7 +106,7 @@ class Product:
     def highest(self) -> int | None:
         """The highest v### number, empty folders included: the version a DCC node writes
         to until a new one is made (spec §13.2)."""
-        return max((v.number for v in self.versions()), default=None)
+        return highest_version(self.path)
 
     def file_path(self, version: int, ext: str, frame: int | None = None) -> Path:
         """`…/v002/hero_pants_v002[.1001].ext`, whether or not it exists."""
@@ -124,14 +124,7 @@ class Product:
     def next_version_dir(self) -> Path:
         """Create and return the next v### folder. Never reuses an existing one."""
         validate_name(self.kind, self.name)
-        number = max((v.number for v in self.versions()), default=0) + 1
-        while True:
-            folder = self.path / f"v{number:03d}"
-            try:
-                folder.mkdir(parents=True)
-                return folder
-            except FileExistsError:
-                number += 1  # someone else got there first
+        return next_version_dir(self.path)
 
 
 @dataclass(frozen=True)
