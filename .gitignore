@@ -20,3 +20,6 @@ Thumbs.db
 
 # Houdini HDA backups (written next to the HDA on every save)
 integrations/houdini/otls/backup/
+
+# L0 spike output (renders, textures, reports)
+spike/l0/out/

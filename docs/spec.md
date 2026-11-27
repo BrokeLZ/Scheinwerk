@@ -946,7 +946,7 @@ scheinwerk/
 
 ## 17. Asset library
 
-Status: **planned** (Phase 5, §16). Sections 1–16 describe what exists; this section is the plan the library is built against. As each step (§17.12) lands, its rules become binding like the rest of this file and code follows them. Items marked *(L0)* depend on the spike and are confirmed or changed by its findings before any code relies on them.
+Status: **planned** (Phase 5, §16). Sections 1–16 describe what exists; this section is the plan the library is built against. As each step (§17.12) lands, its rules become binding like the rest of this file and code follows them. The spike (L0) checked the tools and USD/Karma behaviour this section relies on in Houdini 21 on macOS; its scripts and findings are in `spike/l0/` (`FINDINGS.md`), and the same scripts are still to be run on Windows.
 
 ### 17.1 Purpose and scope
 
@@ -981,8 +981,8 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
   - *Open in workshop* on a library item creates that workshop asset (if missing) and ingests the item's originals (`source/` of its latest version) into it as the product `source` (§9.4), e.g. to rework a downloaded asset later.
   - Its department template (written by `sw lib init`, editable like any project's): `mdl` with tasks `main` and `speedtree`, `lookdev`, `tex`. Separate tasks keep the per-task version counter (§5.4) of `.spm` and `.hip` workfiles apart.
   - Example, a SpeedTree tree: `mdl/speedtree/work/oak_k3f9q2_mdl_speedtree_v004.spm` (saved with *Copy next version path*; open it with SpeedTree through the user setting `dcc`, §8.4), exported into the product `publish/speedtree/v004/`; `mdl/main/work/oak_k3f9q2_mdl_main_v007.hip` imports the export (*Import SOP*), builds the component with proxy, materials and variants, publishes `geo`/`mtl`, and is promoted.
-- `SW_LIBRARY` (runtime env var, absolute, `/` separators) is the library root. The Houdini package (§13.2 item 1) sets it and adds the root to `PXR_AR_DEFAULT_SEARCH_PATH` *(L0)*; `sw install houdini` writes both from the user setting.
-- External tools (§17.5) are found on `PATH`, in the Houdini installation *(L0)*, or through the user setting `tools` (absolute paths per tool).
+- `SW_LIBRARY` (runtime env var, absolute, `/` separators) is the library root. The Houdini package (§13.2 item 1) sets it and sets `PXR_AR_DEFAULT_SEARCH_PATH` to the same root; `sw install houdini` writes both from the user setting. The search path is written as a plain value: a package's `"method": "prepend"` replaces a value set outside Houdini instead of prepending to it (Houdini 21). USD reads the variable once at startup, so a changed library needs a restart of Houdini. Every husk or hython job `sw lib` starts gets both variables in its environment.
+- External tools (§17.5: `hoiiotool`, `husk`, `hython`) are found in `$HFS/bin` when `HFS` is set, else in the newest Houdini 21.0 installation in the OS's default folder (macOS `/Applications/Houdini/Houdini21.0.*/Frameworks/Houdini.framework/Versions/Current/Resources/bin`, Windows `C:\Program Files\Side Effects Software\Houdini 21.0.*\bin`), else on `PATH` (`oiiotool` stands in for `hoiiotool`). The user setting `tools` (absolute path per tool) overrides each one.
 
 ### 17.3 Layout
 
@@ -1015,14 +1015,15 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
 
 | Type | Derived files of one variant | USD |
 | --- | --- | --- |
-| `hdri` | `{id}_{var}_{v}.tx` (lat-long environment map) | none |
-| `texture` | `{id}_{var}_{v}.tx`, or UDIM tiles `{id}_{var}_{v}.<UDIM>.tx` | none |
-| `texture_set` | `textures/{id}_{var}_{role}_{v}[.<UDIM>].tx`, metal/rough roles only (§17.5) | none |
+| `hdri` | `{id}_{var}_{v}.exr` (lat-long environment map) | none |
+| `texture` | `{id}_{var}_{v}.{ext}`, or UDIM tiles `{id}_{var}_{v}.<UDIM>.{ext}` | none |
+| `texture_set` | `textures/{id}_{var}_{role}_{v}[.<UDIM>].{ext}`, metal/rough roles only (§17.5) | none |
 | `model` | `textures/…`, `{id}_{var}_geo.usd`, `{id}_{var}_mtl.usd`, `payload_{var}.usd` | `{id}.usd` in every version: the component |
 
-- **Model** versions have the structure of a project asset (§9.3), plus a library variant set. `{id}.usd`: `/{id}` (Xform, `kind = "component"`, `assetInfo`, `defaultPrim`) with the variant set **`variant`**; each variant's payload is that variant's `payload_{var}.usd` (`./payload_main.usd`, or `../v003/payload_winter.usd` for one kept from v003), default selection `main`. Each `payload_{var}.usd` sublayers that variant's `mtl` then `geo` layer, which hold `geo/render`, `geo/proxy` and `mtl` as in §9.3, including any `model`/`look` variant sets authored in the project. A shot references a library model like a project asset and chooses the variant with the stage's own variant selection (per prim, also for instancer prototypes). A model with only `main` still has the variant set.
+- `{ext}` is the container (§17.5): `exr` (tiled, mipmapped OpenEXR) for half and float maps, i.e. colour roles, HDRIs and float data; `tx` (tiled, mipmapped TIFF) for 8- and 16-bit data maps. Nuke and Blender read the `.exr` maps directly.
+- **Model** versions have the structure of a project asset (§9.3), plus a library variant set. `{id}.usd`: `/{id}` (Xform, `kind = "component"`, `assetInfo`, `defaultPrim`) with the variant set **`variant`**; each variant's payload is that variant's `payload_{var}.usd` (`./payload_main.usd`, or `../v003/payload_winter.usd` for one kept from v003), default selection `main`. Each `payload_{var}.usd` sublayers that variant's `mtl` then `geo` layer, which hold `geo/render`, `geo/proxy` and `mtl` as in §9.3, including any `model`/`look` variant sets authored in the project. A shot references a library model like a project asset and chooses the variant with the stage's own variant selection (per prim; PointInstancer prototypes and native instances with different selections work, checked in Karma CPU and XPU). The `variant` set sits on the component prim outside the payloads, so its choices show with payloads unloaded (unlike the `model`/`look` sets inside them, §9.3). A model with only `main` still has the variant set.
 - Everything a version's USD references is **file-relative** and lies in that version or an earlier version of the same item (`./textures/…`, `../v003/…`), so items are self-contained and work wherever they are referenced from.
-- Every texture input in generated USD carries its colour space explicitly (`colorSpace` metadata: the working space or `raw`), never relying on OCIO file rules.
+- Every texture input in generated USD carries its colour space explicitly (`colorSpace` metadata on the file input: `working_space` for colour roles, `raw` for data roles, names as in the OCIO config). Karma needs it: it ignores the colour space recorded inside a file and otherwise guesses (8-bit = sRGB, float = already linear), so an untagged data map would be linearised. It converts from the tagged space to its rendering space (the config's `scene_linear` role, Linear Rec.709 in Houdini 21's default config), so `working_space` need not be the rendering space.
 - All USD layers core writes carry `framesPerSecond`/`timeCodesPerSecond` (24 unless the item is animated) as in §9.2 item 5.
 
 ### 17.4 `item.json` and `version.json`
@@ -1066,16 +1067,17 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
   },
   "promoted_from": { "project": "library_workshop", "asset": "assets/oak_k3f9q2", "layers": { "geo": 12, "mtl": 9 } },
   "ocio": { "config": "<config name>", "working_space": "ACEScg" },
-  "tools": { "maketx": "<version>" },
+  "tools": { "hoiiotool": "2.5.18.0" },
   "workflow": "metal_rough",
   "metal_threshold": null,
   "resolution": [4096, 4096],
   "udim": false,
+  "scale": null,
   "files": [
     {
       "variant": "winter",
       "source": ["source/oak_winter_bark_color.png"],
-      "output": "textures/oak_k3f9q2_winter_bark_basecolor_v004.tx",
+      "output": "textures/oak_k3f9q2_winter_bark_basecolor_v004.exr",
       "role": "basecolor",
       "from_space": "sRGB - Texture",
       "to_space": "ACEScg",
@@ -1093,6 +1095,7 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
 - `source_version`: set when the originals of this version's files live in an earlier version's `source/` (a rebuild with unchanged originals copies nothing; that earlier version is never deleted).
 - `promoted_from`: project name, the asset's root-relative path, and the published layer or product versions it was made from (no absolute paths).
 - `workflow`: `metal_rough` or `spec_gloss`, the workflow of the originals; `metal_threshold` only for `spec_gloss` (§17.5).
+- `scale` (ingested models only, else `null`): the factor applied on top of the file's own units (§17.6), `1` when it wasn't changed.
 - `sha256` of the originals lets ingest warn when the same files are ingested twice.
 - Readers never require `version.json` beyond the finalized check; other missing keys read as no info.
 
@@ -1100,16 +1103,16 @@ A catalog of finished, reusable assets on this machine, shared by all projects, 
 
 The texture processor is a project-free core module, shared by the library and, later, project `textures` products (§9.3). It writes nothing outside the version folder it is given and never touches originals.
 
-- **Tools.** It runs external programs as subprocesses: OpenImageIO `maketx`/`oiiotool` or the equivalents bundled with Houdini 21 *(L0: which exist on macOS and Windows, which flags)*. The core stays stdlib-only; nothing is pip-installed.
-- **Output.** Every texture becomes a tiled, mipmapped `.tx`. HDRIs are written as lat-long environment maps. Originals are kept at their full resolution; there is no downsizing (the mipmaps cover smaller sizes).
-- **Colour roles** (`hdri`, a colour `texture`, `basecolor`, `emission`): converted from their source colour space to `working_space` with the machine's OCIO config, written as **half float**. An HDRI whose peak value exceeds the half-float maximum (65504, e.g. an unclipped sun) is written as float.
-- **Data roles** (`normal`, `roughness`, `metalness`, `specular_level`, `height`, `ao`, `opacity`, and a data `texture`): no colour conversion, tagged `raw`, bit depth kept (8/16-bit integer stays integer, float stays float).
+- **Tools.** It runs `hoiiotool` (OpenImageIO's `oiiotool` as shipped with Houdini 21: OIIO 2.5, OCIO 2.4, found as in §17.2) as a subprocess, one call per output file. Everything below is one `hoiiotool` command line: `--colorconvert`, `-d`, `-otex`/`-oenv`, `--invert`, arithmetic (`--maxchan`, `--subc`, `--mul`, …), `--stats`. `imaketx` is not used: it can't set the output data type and writes colour-converted maps as 8-bit. The core stays stdlib-only; nothing is pip-installed. The tool's version is recorded in `version.json` (`tools`).
+- **Output.** Every texture becomes a tiled, mipmapped map (Karma CPU and XPU read its MIP levels): OpenEXR (`.exr`) for half and float data, TIFF (`.tx`) for 8- and 16-bit data (§17.3). TIFF has no half type (`-d half -otex x.tx` silently writes float), hence two containers. HDRIs are written as lat-long environment maps (`-oenv`). Originals are kept at their full resolution; there is no downsizing (the mipmaps cover smaller sizes).
+- **Colour roles** (`hdri`, a colour `texture`, `basecolor`, `emission`): converted from their source colour space to `working_space` with the machine's OCIO config, written as **half float**. An HDRI whose peak value (read with `hoiiotool --stats`) exceeds the half-float maximum (65504, e.g. an unclipped sun) is written as float: `hoiiotool` clamps half output to 65504, which would take energy out of the sun.
+- **Data roles** (`normal`, `roughness`, `metalness`, `specular_level`, `height`, `ao`, `opacity`, and a data `texture`): no colour conversion, tagged `raw`, bit depth kept (8/16-bit integer stays integer in a `.tx`, float stays float in an `.exr`).
 - **Normal maps** are stored OpenGL-style (+Y). DirectX sources get their green channel flipped (`flip_green`).
 - **Gloss maps** become roughness (`invert`: 1 − value).
-- **Specular/gloss sets are converted to metal/rough** (`workflow: spec_gloss`), so every `texture_set` has the same roles. This is an approximation, not an exact conversion: `roughness` = 1 − gloss (exact); `metalness` from the specular map, 0 at the ~4 % reflectance of non-metals rising to 1 at `metal_threshold` (default 0.2, linear); `basecolor` = diffuse blended towards the specular colour by metalness. The originals stay in `source/`, so a version can be rebuilt with another threshold; the preview (§17.7) shows the result. *(L0: whether `oiiotool` alone can do the per-pixel maths.)*
-- **UDIMs:** tiles named `<name>.<UDIM>.<ext>` (1001…) are processed per tile and keep their numbers; USD uses the `<UDIM>` token.
+- **Specular/gloss sets are converted to metal/rough** (`workflow: spec_gloss`), so every `texture_set` has the same roles. This is an approximation, not an exact conversion: `roughness` = 1 − gloss (exact); `metalness` from the specular map, 0 at the ~4 % reflectance of non-metals rising to 1 at `metal_threshold` (default 0.2, linear); `basecolor` = diffuse blended towards the specular colour by metalness. The originals stay in `source/`, so a version can be rebuilt with another threshold; the preview (§17.7) shows the result. `hoiiotool` does the per-pixel maths in one command line; specular and diffuse are linearised first.
+- **UDIMs:** tiles named `<name>.<UDIM>.<ext>` (1001…) are processed one `hoiiotool` call per tile (its own `<UDIM>` handling crashes) and keep their numbers; USD uses the `<UDIM>` token.
 - **Detection** (shown per entry in the Ingest view, §17.11, every value can be changed, all recorded in `version.json`):
-  - Item type from what is dropped: one float image with a 2:1 aspect → `hdri`; several images where at least two have known roles → `texture_set`; one image → `texture`; `fbx`, `obj`, `gltf`, `glb`, `abc`, `usd`, `usda`, `usdc`, `usdz` → `model`. Zip files are extracted to a temporary folder first. Anything ambiguous is asked.
+  - Item type from what is dropped: one float image with a 2:1 aspect → `hdri`; several images where at least two have known roles → `texture_set`; one image → `texture`; `fbx`, `obj`, `gltf`, `glb`, `abc`, `usd`, `usda`, `usdc`, `usdz` → `model`. Zip files are extracted to a temporary folder first. Anything ambiguous is asked. Images `hoiiotool` can't read (webp, jxl, heif, jp2, …) are listed as unsupported.
   - Variants from tokens `var<n>`/`variation<n>` (Megascans plants: `var1`…`var12` → variants `var01`…`var12`); everything else is `main`. Ingesting into an existing item as a new or changed variant is chosen per entry (`--item`, `--variant`).
   - Role from filename tokens, case-insensitive: `basecolor`/`albedo`/`col`/`color` → `basecolor`; `diffuse`/`diff` → `diffuse` (spec/gloss); `normal`/`nrm`/`nor` → `normal`; `rough` → `roughness`; `gloss` → `glossiness`; `metal` → `metalness`; `spec` → `specular` (spec/gloss) or `specular_level` (metal/rough); `disp`/`height` → `height`; `ao`/`occlusion` → `ao`; `opacity`/`alpha`/`mask` → `opacity`; `emissive`/`emission` → `emission`. Unknown files are listed and can be assigned or skipped.
   - Workflow: a set with `diffuse`, `specular` or `glossiness` and no `metalness` is `spec_gloss` (asked to confirm), otherwise `metal_rough`.
@@ -1119,7 +1122,7 @@ The texture processor is a project-free core module, shared by the library and, 
 
 ### 17.6 Models and promotion
 
-- **External models (ingest).** A hython job *(L0)* imports the file and writes the model version (§17.3): Y-up, `metersPerUnit = 1`, the component structure, the original position kept. An optional proxy (PolyReduce) fills `geo/proxy`. The file's material assignments are kept; the textures it uses (or that sit next to it) go through the processor and are wired into one MaterialX material per source material by role detection. Separate meshes or files detected as variants (§17.5) become variants. This is best effort and flagged in its ingest entry; to fix a model properly, rework it in the workshop (*Open in workshop*, §17.2) and promote it.
+- **External models (ingest).** A hython job opens the file through Houdini's USD file-format plugins (`fbx`, `gltf`, `glb`, `obj`, `abc`; USD files as they are), flattens it and writes the model version (§17.3): Y-up, `metersPerUnit = 1`, the component structure, the original position kept. Up axis and units come from the file's authored `upAxis`/`metersPerUnit` (missing ones count as Y-up metres, e.g. `obj`), times the plan's `scale` (default 1, recorded in `version.json`): unit labels are often wrong (Houdini's own FBX export labels metre values as centimetres), so the ingest entry shows the model's size in metres. An optional proxy (PolyReduce) fills `geo/proxy`. The file's material assignments are kept; the plugins turn its materials into `UsdPreviewSurface` networks, whose textures (also ones embedded in `glb`/`fbx`, read through the USD resolver) and the textures that sit next to the file go through the processor and are wired into one MaterialX material per source material by role detection. Separate meshes or files detected as variants (§17.5) become variants. This is best effort and flagged in its ingest entry; to fix a model properly, rework it in the workshop (*Open in workshop*, §17.2) and promote it.
 - **Promotion** (`sw lib promote`, the project browser's asset menu, the Houdini menu) makes a new library version from a project asset, as one variant (default `main`, or a chosen one: *"as variant winter"*); the item's other variants are kept from the previous version.
   - **Model**, from the asset's current `geo` and `mtl` versions. A hython job:
     1. takes those layers and every file they reference,
@@ -1133,25 +1136,27 @@ The texture processor is a project-free core module, shared by the library and, 
 
 ### 17.7 Previews
 
-- Every variant has a thumbnail, `thumb_{var}.jpg` in the version that holds its files, in the OCIO config's sRGB display transform: 512 × 512 for models and texture sets, 1024 × 512 for HDRIs, the image's aspect within 512 px for textures. The grid shows `main`'s.
+- Every variant has a thumbnail, `thumb_{var}.jpg` in the version that holds its files, through the OCIO config's default display with the view `ACES 1.0 - SDR Video` when the config has it (it tone-maps, so HDRIs don't clip), else the default view: 512 × 512 for models and texture sets, 1024 × 512 for HDRIs, the image's aspect within 512 px for textures. The grid shows `main`'s.
 - Karma renders, run as husk/hython jobs after the version's files are written:
   - `model`: the component with that variant selected, in a fixed preview scene (neutral studio lighting, camera framing the bounds);
-  - `texture_set`: a shader ball, loading the set with `sw_texture_set` (§17.8) at its `size_m` into the preview scene's own surface shader.
-- `hdri`: the lat-long image, tone-mapped. `texture`: the image itself. A render adds nothing for these.
-- The preview scenes ship with Scheinwerk (`src/scheinwerk/resources/library/`, *(L0)* format).
+  - `texture_set`: a shader ball with a MaterialX material that loads the set like `sw_texture_set` (§17.8, same network, triplanar at `size_m`) into the preview scene's own surface shader.
+- `hdri`: the lat-long image, tone-mapped. `texture`: the image itself. A render adds nothing for these; `hoiiotool` makes them (`--ociodisplay`, `--fit`).
+- The preview scenes ship with Scheinwerk in `src/scheinwerk/resources/library/`: `preview_studio.usda` (text: lights and a `RenderSettings` prim) and `shaderball.usd` (exported once from Houdini's *Test Geometry: Shader Ball*).
+- A preview job writes a temporary wrapper layer outside the library that sublayers `preview_studio.usda` and adds the item under `/preview`: the model referenced library-relative with its variant selected, or the shader ball referenced with the texture-set material (written as text by core, library-relative texture paths) bound to it. A hython step computes the bounds and adds a camera that frames them. husk renders it (`-s`, with `PXR_AR_DEFAULT_SEARCH_PATH` set, §17.2); `hoiiotool` puts the EXR over a neutral grey, applies the display view and writes the JPEG.
 - A failed preview never blocks a version: it is finalized without that thumbnail, the grid shows a placeholder, and `sw lib thumb` renders it again. Thumbnails are the only files in a finalized version that may be written later.
 
 ### 17.8 Referencing from projects
 
-- **USD** references library items **library-relative**, always pinned to a version, resolved through the search path (§17.2): `model/oak_k3f9q2/v004/oak_k3f9q2.usd`. Never `$SW_LIBRARY/…` in USD: Houdini expands variables when it authors the value, so an absolute path would end up in the published file. *(L0: Houdini, husk and Karma texture lookups resolve such paths, and the *Use Relative Paths* output processor leaves them alone.)*
+- **USD** references library items **library-relative**, always pinned to a version, resolved through the search path (§17.2): `model/oak_k3f9q2/v004/oak_k3f9q2.usd`. Never `$SW_LIBRARY/…` in USD: Houdini expands variables when it authors the value, and the *Use Relative Paths* output processor then turns it into a file-relative path to the library (`../../…/library/model/…`) that breaks wherever the library sits elsewhere relative to the project. Library-relative paths (never starting with `./`, `../` or `/`) resolve in Houdini, husk and Karma texture lookups (CPU and XPU), and the output processor leaves them alone.
+- Variant selections are authored in the referencing layer, never in a library layer (a stage opened on a library file would otherwise change that layer in memory for everything using it).
 - **Non-USD places** (Houdini SOP/COP parms, Nuke) use `$SW_LIBRARY/…`.
 - Updating to a newer version is always explicit; the library browser and the loading tools show when one exists.
 - Library items count as published (§9.2 item 6): a published layer may reference them.
 - `sw doctor` treats library-relative and `$SW_LIBRARY` paths as relative, and reports references to library versions that don't exist on this machine (`missing library item`).
 - **Houdini** (§17.12 L5):
   - `sw_import_lop` accepts library models (`lib:<item id>`; choosing an item writes its version, never *latest*) and offers their `variant` choices.
-  - HDRIs: a node that creates a DomeLight under `/world/lights/<item id>` with the chosen variant's `.tx` (library-relative), oriented to look the same as Houdini's *Dome Light* LOP *(L0)*.
-  - `sw_texture_set`: an HDA for material networks that loads every map of a texture set (or a single texture), with a variant choice and shared controls: projection (UV or triplanar), scale in metres (default the item's `size_m`), rotation, offset, triplanar blend, and the displacement values from `item.json`. Its outputs plug into any surface shader. *(L0: MaterialX nodes in Karma 21, and correct normal maps under triplanar projection.)*
+  - HDRIs: a node that creates `/world/lights/<item id>` as a `DomeLight_1` with `poleAxis = "scene"` and no rotation of its own, exactly as Houdini 21's *Dome Light* LOP authors it (the image centre faces +Z, the top row +Y), its texture the chosen variant's `.exr` (library-relative, tagged `working_space`). Its controls: a rotation about Y, and *visible to camera* (`karma:light:renderlightgeo`, which the Dome Light LOP doesn't set).
+  - `sw_texture_set`: an HDA for material networks that loads every map of a texture set (or a single texture), with a variant choice and shared controls: projection (UV or triplanar), scale in metres (default the item's `size_m`), rotation, offset, triplanar blend, and the displacement values from `item.json`. Its outputs plug into any surface shader. It uses only standard MaterialX nodes (no `kma_*`), so Karma CPU and XPU render it the same. Under triplanar projection each map is projected along the three axes (`ND_triplanarprojection` convention, up axis Y; position in metres divided by the scale) and blended by the normal. Normal maps are decoded per projection axis with that axis' tangent and bitangent and then blended: triplanar-projecting the normal map into one `normalmap` node, as SideFX's *MtlX PBR Texture Set* does, uses the mesh's UV tangents and tilts the normals the wrong way wherever the UVs don't follow the projection. Karma's `normalmap` ignores tangent and bitangent given as plain values, so they are connected from constant nodes.
   - *Create material from texture set*: a script that builds a Material Library with `sw_texture_set` and a surface shader wired to it, which the user then owns and edits.
   - Dragging from the library panel onto a network creates the matching node.
 
@@ -1171,7 +1176,7 @@ src/scheinwerk/dcc/           hython jobs: model conversion, promotion, preview 
 - `library/` imports only the standard library and the project-free core modules, never `project`, `context` or `entities` (promotion and *Open in workshop* reach the project through the CLI/hython job, not the library package). A test enforces this, like the stdlib test.
 - Type handlers are plain modules looked up in a dict by type name: no base classes or plugin registry.
 - Version counting moves out of `Product` into plain functions that take any folder (no behaviour change for projects).
-- Long jobs (`.tx` conversion, hython, husk) run as `sw lib …` subprocesses; the GUI shows progress and never blocks, in the standalone window and in Houdini.
+- Long jobs (texture conversion, hython, husk) run as `sw lib …` subprocesses; the GUI shows progress and never blocks, in the standalone window and in Houdini.
 - The project rules apply: atomic JSON writes, never move or delete user files, unknown things shown flagged, no absolute paths inside the library.
 - **Search** scans the library on start and on reload. Filters combine: type, category (an item shows under each of its categories and their parents), tags (all of the chosen ones), and free text over display name, id, variant names, categories, tags, description and credits. No index; thumbnails load lazily. A disposable machine-local cache outside the library is allowed later if scanning ever becomes slow.
 
@@ -1183,7 +1188,7 @@ sw lib ls [type] [--category c] [--tag t] [--search text]
 sw lib new <type> "<name>"                            # new asset in the workshop, named after the future item id
 sw lib workshop <item>                                # Open in workshop: workshop asset + originals as product `source`
 sw lib detect <files|folder|zip…> [--json]           # print the ingest plans detection makes (§17.5), writes nothing
-sw lib ingest <files|folder|zip…> [--type T] [--name N] [--item <id>] [--variant V] [--category c…] [--tag t…] [--yes]
+sw lib ingest <files|folder|zip…> [--type T] [--name N] [--item <id>] [--variant V] [--scale X] [--category c…] [--tag t…] [--yes]
 sw lib ingest --plan <plan.json>                     # run one plan as printed by detect (edited by hand or the GUI)
 sw lib promote <asset> [--item <id>] [--variant V] [--product P]   # inside a project: new library version
 sw lib meta <item> [--name N] [--add-category c] [--remove-category c] [--add-tag t] [--remove-tag t]
@@ -1240,7 +1245,7 @@ The library browser is its own window (`sw lib gui`, also a dockable panel in Ho
 
 - **Adding:** *Add files…* (multi-select), *Add folder…*, or dragging files, folders and zips anywhere into the window. Detection (§17.5) groups what was added into entries: one PBR set, HDRI, texture or model per entry. A folder holding 20 downloaded sets gives 20 entries; Megascans `var1`…`var12` files give one entry with 12 variants.
 - **Each entry** shows a thumbnail of its source, the detected type and display name, and a status: *ready*, *needs input* (something ambiguous, e.g. the normal convention), *warning* (e.g. the same files were ingested before, by `sha256`), *queued*, *processing*, *done* (click to show the item in Browse) or *failed* (with the error; can be edited and submitted again).
-- **The detail of the selected entry** shows everything detection decided, and all of it can be changed: type; display name; target (a new item, or an existing item as a new variant or a new version); variants and their files with role, source colour space, flip green and invert; workflow and metal threshold; `size_m` and `displacement`; categories, tags, credits, license, source URL. Unknown files can be assigned or skipped.
+- **The detail of the selected entry** shows everything detection decided, and all of it can be changed: type; display name; target (a new item, or an existing item as a new variant or a new version); variants and their files with role, source colour space, flip green and invert; workflow and metal threshold; `size_m` and `displacement`; for models the scale (with the resulting size in metres); categories, tags, credits, license, source URL. Unknown files can be assigned or skipped.
 - **Several entries selected:** the fields they share (categories, tags, credits, license) can be set for all of them at once, e.g. for a batch of downloads from one site.
 - **Submitting:** nothing is written until an entry is submitted, with its own *Ingest* button or with *Ingest all* (every entry that is *ready* or *warning*; *needs input* entries are skipped and say why). Submitted entries run in the background as `sw lib ingest --plan` jobs, a few at a time, so the window (and Houdini) stays usable; *Remove* drops an entry that isn't running.
 - Entries live only in the open window; closing it forgets entries that weren't submitted (no state is stored anywhere).
@@ -1249,9 +1254,9 @@ The library browser is its own window (`sw lib gui`, also a dockable panel in Ho
 
 | Step | Scope | Done when |
 | --- | --- | --- |
-| L0 — Spike | Which texture tools exist in Houdini 21 on macOS and Windows, and their flags (colour conversion, half float, lat-long, UDIM, per-pixel maths for spec/gloss); whether Karma CPU and XPU use `.tx` mipmaps and `colorSpace` metadata; `PXR_AR_DEFAULT_SEARCH_PATH` in Houdini, husk and Karma texture lookups, and the output processor leaving such paths alone; DomeLight orientation; a component whose `variant` set switches payloads across version folders, also as instancer prototypes; MaterialX image and triplanar nodes in Karma 21, normal maps under triplanar; headless hython fbx/gltf → USD; preview scene format | Findings written into this section, every *(L0)* resolved; no production code |
+| L0 — Spike | Which texture tools exist in Houdini 21 on macOS and Windows, and their flags (colour conversion, half float, lat-long, UDIM, per-pixel maths for spec/gloss); whether Karma CPU and XPU use `.tx` mipmaps and `colorSpace` metadata; `PXR_AR_DEFAULT_SEARCH_PATH` in Houdini, husk and Karma texture lookups, and the output processor leaving such paths alone; DomeLight orientation; a component whose `variant` set switches payloads across version folders, also as instancer prototypes; MaterialX image and triplanar nodes in Karma 21, normal maps under triplanar; headless hython fbx/gltf → USD; preview scene format | Done on macOS (2026-11-27): findings written into this section, scripts in `spike/l0/`. The Windows run of the same scripts is still open and may amend §17.2/§17.5 |
 | L1 — Library core | Project-free core refactor (version counting), `library.json`, workshop creation, layout and item ids, variants, `item.json`/`version.json`, scan and search, `sw lib init`/`ls`/`meta`/`path`, `doctor` additions | Tests pass on macOS and Windows CI |
-| L2 — Texture processor | Detection (incl. variants), recipes (incl. spec/gloss conversion), `.tx` and image previews, `rebuild`, `sw lib ingest` for `hdri`/`texture`/`texture_set` | 20 downloaded HDRIs and PBR sets (Poly Haven, ambientCG, one spec/gloss set, one HDRI with a sun-less variant) ingested in one batch, correct when loaded by hand in Karma |
+| L2 — Texture processor | Detection (incl. variants), recipes (incl. spec/gloss conversion), `.exr`/`.tx` maps and image previews, `rebuild`, `sw lib ingest` for `hdri`/`texture`/`texture_set` | 20 downloaded HDRIs and PBR sets (Poly Haven, ambientCG, one spec/gloss set, one HDRI with a sun-less variant) ingested in one batch, correct when loaded by hand in Karma |
 | L3 — Library GUI | Browse view (search, category tree, tags and filters, grid, detail panel with variants, metadata editing) and Ingest view (entries, per-entry editing, bulk editing, *Ingest* / *Ingest all*, background jobs) | A folder of mixed downloads is checked, corrected, ingested, categorized and found again without the CLI |
 | L4 — Models and promotion | External model ingest, normalized `textures` products for project assets, `sw lib new`/`workshop`/`promote` (models with variants, texture products), Karma previews for models and texture sets | A Megascans plant with its variations, a SpeedTree tree built in the workshop with a winter variant added later, and an asset promoted from a project each end up as a clean item with rendered previews |
 | L5 — Houdini | `sw_import_lop` with library models and variants, the DomeLight node, `sw_texture_set` HDA, *Create material from texture set*, library panel with drag and drop | A library model (with a chosen variant), an HDRI and a texture set (triplanar, uniform scale) are rendered in a shot with no typed paths |

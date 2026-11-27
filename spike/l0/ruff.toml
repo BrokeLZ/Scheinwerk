@@ -1,0 +1,5 @@
+# Throwaway spike scripts: long lines are mostly USDA text and tool command lines.
+extend = "../../pyproject.toml"
+
+[lint]
+extend-ignore = ["E501"]
